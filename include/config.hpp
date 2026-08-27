@@ -17,6 +17,7 @@
 #include "display/display_api.hpp"
 #include "display/layout/screen_geom.hpp"
 #include "i2c_api.hpp"
+#include "sensors/amg8833_api.hpp"
 #include "sensors/hmc5883l_api.hpp"
 
 namespace proto_cfg {
@@ -63,6 +64,15 @@ static inline hmc5883l_cfg_t makeHmcCfg(void)
     return cfg;
 }
 
+static inline amg8833_cfg_t makeAmgCfg(void)
+{
+    amg8833_cfg_t cfg = {};
+    cfg.addr7 = amg8833_regs::kAddr7;
+    cfg.fps   = amg8833_regs::eAmgFps10Hz;
+    cfg.moving_average = true;
+    return cfg;
+}
+
 /* --- Magnetometer plot --- */
 static constexpr uint32_t kMagPlotWindowMs    = 1000U;
 /** ~75 Hz poll to match max HMC5883L ODR. */
@@ -95,6 +105,20 @@ static constexpr uint16_t kMagMaxSamples = kMagFftN;
 
 static_assert(kMagMaxSamples >= kMagFftN, "mag ring smaller than FFT N");
 static_assert(kMagMaxSamples <= 256U, "mag ring buffer too large");
+
+/* --- AMG8833 IR heatmap --- */
+/** Match AMG8833 10 Hz frame rate. */
+static constexpr uint32_t kIrSamplePeriodMs = 100U;
+static constexpr uint8_t  kIrGridSize      = 8U;
+
+static constexpr uint16_t kIrHeatX0 = 0U;
+static constexpr uint16_t kIrHeatY0 = 0U;
+static constexpr uint16_t kIrHeatX1 = display_layout::kScreenW - 1U;
+static constexpr uint16_t kIrHeatY1 =
+    static_cast<uint16_t>(display_layout::kBarY - 1U);
+
+static constexpr uint16_t kIrStatusFgColor = kColorWhite;
+static constexpr uint16_t kIrStatusBgColor = kColorBlack;
 
 } /* namespace proto_cfg */
 

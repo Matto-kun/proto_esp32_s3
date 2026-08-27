@@ -1,11 +1,12 @@
 /**
  * @file        main.cpp
- * @brief       Menu: root + SENSOR + MAG live (TIME/Hz)
+ * @brief       Menu: root + SENSOR + MAG live + IR live
  * @author      Mat RB
  * @date        2026-08-12
  */
 
 #include "config.hpp"
+#include "ir_app.hpp"
 #include "mag_app.hpp"
 
 #include "display/display_api.hpp"
@@ -23,6 +24,7 @@ enum UiLevel : uint8_t {
     eUiRoot    = 0,
     eUiSensor  = 1,
     eUiMagLive = 2,
+    eUiIrLive  = 3,
 };
 
 static void clearIconBand(Display& display)
@@ -38,6 +40,13 @@ static void drawMagLiveBar(Display& display, uint8_t mag_sel)
     (void)display_layout::draw_mag_live_menu_bar(
         display, mag_sel,
         mag_app_view_mode(), mag_app_axis_mode(), mag_app_unit_mode(),
+        kColorDkGray, kColorGreen, kColorWhite, kColorYellow);
+}
+
+static void drawIrLiveBar(Display& display, uint8_t ir_sel)
+{
+    (void)display_layout::draw_ir_live_menu_bar(
+        display, ir_sel,
         kColorDkGray, kColorGreen, kColorWhite, kColorYellow);
 }
 
@@ -84,6 +93,7 @@ extern "C" void app_main(void)
     uint8_t root_sel   = display_layout::eMenuBle;
     uint8_t sensor_sel = display_layout::eSensorIrCam;
     uint8_t mag_sel    = display_layout::eMagLiveMode;
+    uint8_t ir_sel     = display_layout::eIrLiveBack;
     bool prev_adv = true;
     bool prev_ok  = true;
 
@@ -112,10 +122,12 @@ extern "C" void app_main(void)
                 (void)display_layout::draw_sensor_menu_bar(display, sensor_sel,
                                                            kColorDkGray, kColorGreen,
                                                            kColorWhite, kColorYellow);
-            } else {
+            } else if (level == eUiMagLive) {
                 mag_sel = static_cast<uint8_t>(
                     (mag_sel + 1U) % display_layout::kMagLiveMenuSelectCount);
                 drawMagLiveBar(display, mag_sel);
+            } else if (level == eUiIrLive) {
+                /* Single Back slot — Advance is a no-op. */
             }
         }
 
@@ -128,6 +140,9 @@ extern "C" void app_main(void)
                     sensor_sel = display_layout::eSensorIrCam;
                     if (mag_app_is_live()) {
                         mag_app_stop(display);
+                    }
+                    if (ir_app_is_live()) {
+                        ir_app_stop(display);
                     }
                     clearIconBand(display);
                     (void)display_layout::draw_sensor_menu_bar(display, sensor_sel,
@@ -155,6 +170,15 @@ extern "C" void app_main(void)
                     (void)mag_app_cycle_unit();
                     drawMagLiveBar(display, mag_sel);
                 }
+            } else if (level == eUiIrLive) {
+                if (ir_sel == display_layout::eIrLiveBack) {
+                    ir_app_stop(display);
+                    level = eUiSensor;
+                    sensor_sel = display_layout::eSensorIrCam;
+                    (void)display_layout::draw_sensor_menu_bar(display, sensor_sel,
+                                                               kColorDkGray, kColorGreen,
+                                                               kColorWhite, kColorYellow);
+                }
             } else if (sensor_sel == display_layout::eSensorFwd) {
                 ESP_LOGI(TAG, "Forward (no-op)");
             } else if (sensor_sel == display_layout::eSensorBack) {
@@ -164,6 +188,9 @@ extern "C" void app_main(void)
                                                     kColorDkGray, kColorGreen,
                                                     kColorWhite, kColorYellow);
             } else if (sensor_sel == display_layout::eSensorMag) {
+                if (ir_app_is_live()) {
+                    ir_app_stop(display);
+                }
                 if (mag_app_start(display) != ESP_OK) {
                     (void)display.fillRect(0U, proto_cfg::kMagPlotY0,
                                            proto_cfg::kMagPlotX1, proto_cfg::kMagPlotY1,
@@ -177,9 +204,29 @@ extern "C" void app_main(void)
                     mag_sel = display_layout::eMagLiveMode;
                     drawMagLiveBar(display, mag_sel);
                 }
+            } else if (sensor_sel == display_layout::eSensorIrCam) {
+                if (mag_app_is_live()) {
+                    mag_app_stop(display);
+                }
+                if (ir_app_start(display) != ESP_OK) {
+                    (void)display.fillRect(proto_cfg::kIrHeatX0, proto_cfg::kIrHeatY0,
+                                           proto_cfg::kIrHeatX1, proto_cfg::kIrHeatY1,
+                                           kColorBlack);
+                    (void)display.drawString(8U, 8U, "IR ERR", kColorRed);
+                    (void)display_layout::draw_sensor_menu_bar(display, sensor_sel,
+                                                               kColorDkGray, kColorGreen,
+                                                               kColorWhite, kColorYellow);
+                } else {
+                    level = eUiIrLive;
+                    ir_sel = display_layout::eIrLiveBack;
+                    drawIrLiveBar(display, ir_sel);
+                }
             } else {
                 if (mag_app_is_live()) {
                     mag_app_stop(display);
+                }
+                if (ir_app_is_live()) {
+                    ir_app_stop(display);
                 }
                 (void)display_layout::draw_sensor_mode_icon(display, sensor_sel,
                                                             kColorCyan, kColorBlack);
@@ -188,6 +235,9 @@ extern "C" void app_main(void)
 
         if (mag_app_is_live()) {
             mag_app_poll(display);
+        }
+        if (ir_app_is_live()) {
+            ir_app_poll(display);
         }
 
         prev_adv = adv;
