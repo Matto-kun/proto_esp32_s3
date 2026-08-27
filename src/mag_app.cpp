@@ -8,8 +8,10 @@
 #include "mag_app.hpp"
 
 #include "config.hpp"
+#include "mag_fft.hpp"
 #include "mag_plot.hpp"
 
+#include "display/layout/mag_live_menu.hpp"
 #include "i2c_api.hpp"
 #include "sensors/hmc5883l_api.hpp"
 
@@ -32,7 +34,7 @@ static uint32_t nowMs(void)
 
 static void clearPlotArea(Display& display)
 {
-    (void)display.fillRect(proto_cfg::kMagPlotX0, proto_cfg::kMagPlotY0,
+    (void)display.fillRect(0U, proto_cfg::kMagPlotY0,
                            proto_cfg::kMagPlotX1, proto_cfg::kMagPlotY1,
                            proto_cfg::kMagPlotBgColor);
 }
@@ -44,9 +46,16 @@ esp_err_t mag_app_start(Display& display)
         return ESP_OK;
     }
 
-    esp_err_t err = s_bus.init();
+    esp_err_t err = mag_fft_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "FFT init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = s_bus.init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "I2C init failed: %s", esp_err_to_name(err));
+        mag_fft_deinit();
         return err;
     }
 
@@ -54,12 +63,16 @@ esp_err_t mag_app_start(Display& display)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "HMC5883L init failed: %s", esp_err_to_name(err));
         (void)s_bus.deinit();
+        mag_fft_deinit();
         return err;
     }
 
     s_live = true;
     s_last_sample_ms = 0U;
     s_plot.reset();
+    s_plot.setViewMode(display_layout::eMagViewTime);
+    s_plot.setAxisMode(display_layout::eMagAxisAll);
+    s_plot.setUnitMode(display_layout::eMagUnitUT);
     clearPlotArea(display);
     ESP_LOGI(TAG, "Magnetometer started");
     return ESP_OK;
@@ -73,6 +86,7 @@ void mag_app_stop(Display& display)
     if (s_bus.isInited()) {
         (void)s_bus.deinit();
     }
+    mag_fft_deinit();
     s_live = false;
     s_last_sample_ms = 0U;
     s_plot.reset();
@@ -92,10 +106,47 @@ bool mag_app_is_live(void)
     return s_live && s_mag.isInited();
 }
 
-void mag_app_poll(Display& display, uint8_t sensor_sel)
+uint8_t mag_app_view_mode(void)
 {
-    (void)sensor_sel;
+    return s_plot.viewMode();
+}
 
+uint8_t mag_app_axis_mode(void)
+{
+    return s_plot.axisMode();
+}
+
+uint8_t mag_app_unit_mode(void)
+{
+    return s_plot.unitMode();
+}
+
+uint8_t mag_app_cycle_view(void)
+{
+    const uint8_t next = static_cast<uint8_t>(
+        (s_plot.viewMode() + 1U) % display_layout::kMagViewModeCount);
+    s_plot.setViewMode(next);
+    return next;
+}
+
+uint8_t mag_app_cycle_axis(void)
+{
+    const uint8_t next = static_cast<uint8_t>(
+        (s_plot.axisMode() + 1U) % display_layout::kMagAxisModeCount);
+    s_plot.setAxisMode(next);
+    return next;
+}
+
+uint8_t mag_app_cycle_unit(void)
+{
+    const uint8_t next = static_cast<uint8_t>(
+        (s_plot.unitMode() + 1U) % display_layout::kMagUnitModeCount);
+    s_plot.setUnitMode(next);
+    return next;
+}
+
+void mag_app_poll(Display& display)
+{
     if (!mag_app_is_live()) {
         return;
     }

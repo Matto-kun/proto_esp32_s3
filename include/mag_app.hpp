@@ -3,10 +3,6 @@
  * @brief       Lazy magnetometer + live plot (app module)
  * @author      Mat RB
  * @date        2026-08-19
- *
- * @details
- *   I2C/HMC5883L/MagPlot live in mag_app.cpp static storage.
- *   Hardware is not touched until mag_app_start().
  */
 
 #ifndef MAG_APP_HPP
@@ -21,6 +17,13 @@ esp_err_t mag_app_start(Display& display);
 void      mag_app_stop(Display& display);
 void      mag_app_reset_plot(Display& display);
 bool      mag_app_is_live(void);
-void      mag_app_poll(Display& display, uint8_t sensor_sel);
+void      mag_app_poll(Display& display);
+
+uint8_t mag_app_view_mode(void);
+uint8_t mag_app_axis_mode(void);
+uint8_t mag_app_unit_mode(void);
+uint8_t mag_app_cycle_view(void);
+uint8_t mag_app_cycle_axis(void);
+uint8_t mag_app_cycle_unit(void);
 
 #endif /* MAG_APP_HPP */

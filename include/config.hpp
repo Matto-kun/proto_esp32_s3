@@ -36,7 +36,7 @@ static constexpr uint32_t kPanelPowerSettleMs = 150U;
 static constexpr uint8_t kBtnAdvance = 5U;
 static constexpr uint8_t kBtnAccept  = 6U;
 static constexpr uint8_t kBtnDebounceMs = 20U;
-static constexpr uint32_t kMainLoopPeriodMs = 20U;
+static constexpr uint32_t kMainLoopPeriodMs = 5U;
 
 /* --- I2C / HMC5883L (pinout_gpio.json imu) --- */
 static constexpr int8_t kPinI2cSda = 9;
@@ -57,7 +57,7 @@ static inline hmc5883l_cfg_t makeHmcCfg(void)
 {
     hmc5883l_cfg_t cfg = {};
     cfg.mode = hmc5883l_regs::eHmcModeContinuous;
-    cfg.odr  = hmc5883l_regs::eHmcOdr15Hz;
+    cfg.odr  = hmc5883l_regs::eHmcOdr75Hz;
     cfg.samples = hmc5883l_regs::eHmcSamples8;
     cfg.gain    = hmc5883l_regs::eHmcGain13Ga;
     return cfg;
@@ -65,27 +65,36 @@ static inline hmc5883l_cfg_t makeHmcCfg(void)
 
 /* --- Magnetometer plot --- */
 static constexpr uint32_t kMagPlotWindowMs    = 1000U;
-static constexpr uint32_t kMagSamplePeriodMs  = 50U;
+/** ~75 Hz poll to match max HMC5883L ODR. */
+static constexpr uint32_t kMagSamplePeriodMs  = 13U;
+static constexpr float    kMagSampleRateHz =
+    1000.0f / static_cast<float>(kMagSamplePeriodMs);
 static constexpr float    kMagScaleMargin     = 1.25f;
 static constexpr float    kMagMinHalfSpanGauss = 0.05f;
 static constexpr uint8_t  kMagPlotPadPx       = 2U;
 
+/** Power-of-two FFT length for Hz magnitude spectrum. */
+static constexpr uint16_t kMagFftN = 128U;
+static constexpr uint16_t kMagFftBins = kMagFftN / 2U;
+
 static constexpr uint16_t kMagColorX = kColorRed;
 static constexpr uint16_t kMagColorY = kColorGreen;
 static constexpr uint16_t kMagColorZ = kColorBlue;
+static constexpr uint16_t kMagColorAbs = kColorYellow;
 static constexpr uint16_t kMagPlotBgColor = kColorBlack;
 static constexpr uint16_t kMagPlotMeanLineColor = kColorDkGray;
 
-static constexpr uint16_t kMagPlotX0 = 0U;
+static constexpr uint16_t kMagPlotX0 = 40U;
 static constexpr uint16_t kMagPlotY0 = 0U;
 static constexpr uint16_t kMagPlotX1 = display_layout::kScreenW - 1U;
 static constexpr uint16_t kMagPlotY1 =
     static_cast<uint16_t>(display_layout::kBarY - 1U);
 
-static constexpr uint16_t kMagMaxSamples =
-    static_cast<uint16_t>((kMagPlotWindowMs / kMagSamplePeriodMs) + 2U);
+/** Ring must hold FFT history (and at least ~1 s for TIME window). */
+static constexpr uint16_t kMagMaxSamples = kMagFftN;
 
-static_assert(kMagMaxSamples <= 64U, "mag ring buffer too large");
+static_assert(kMagMaxSamples >= kMagFftN, "mag ring smaller than FFT N");
+static_assert(kMagMaxSamples <= 256U, "mag ring buffer too large");
 
 } /* namespace proto_cfg */
 

@@ -1,16 +1,8 @@
 /**
  * @file        main.cpp
- * @brief       Two-level menu: root BLE/WIFI/SENSOR + SENSOR submenu
+ * @brief       Menu: root + SENSOR + MAG live (TIME/Hz)
  * @author      Mat RB
  * @date        2026-08-12
- *
- * @details
- *   Tunable parameters in include/config.hpp (pins from pinout_gpio.json).
- *
- *   Bottom GPIO = advance (cycle selection)
- *   Top    GPIO = accept (mode icon, enter SENSOR, back; forward is no-op)
- *
- *   Magnetometer/plot runs only after Accept MAG (mag_app module).
  */
 
 #include "config.hpp"
@@ -28,8 +20,9 @@
 static const char* TAG = "MENU";
 
 enum UiLevel : uint8_t {
-    eUiRoot   = 0,
-    eUiSensor = 1,
+    eUiRoot    = 0,
+    eUiSensor  = 1,
+    eUiMagLive = 2,
 };
 
 static void clearIconBand(Display& display)
@@ -38,6 +31,14 @@ static void clearIconBand(Display& display)
         display_layout::kIconBand.x0, display_layout::kIconBand.y0,
         display_layout::kIconBand.x1, display_layout::kIconBand.y1,
         kColorBlack);
+}
+
+static void drawMagLiveBar(Display& display, uint8_t mag_sel)
+{
+    (void)display_layout::draw_mag_live_menu_bar(
+        display, mag_sel,
+        mag_app_view_mode(), mag_app_axis_mode(), mag_app_unit_mode(),
+        kColorDkGray, kColorGreen, kColorWhite, kColorYellow);
 }
 
 extern "C" void app_main(void)
@@ -82,6 +83,7 @@ extern "C" void app_main(void)
     UiLevel level = eUiRoot;
     uint8_t root_sel   = display_layout::eMenuBle;
     uint8_t sensor_sel = display_layout::eSensorIrCam;
+    uint8_t mag_sel    = display_layout::eMagLiveMode;
     bool prev_adv = true;
     bool prev_ok  = true;
 
@@ -104,21 +106,23 @@ extern "C" void app_main(void)
                 (void)display_layout::draw_menu_bar(display, root_sel,
                                                     kColorDkGray, kColorGreen,
                                                     kColorWhite, kColorYellow);
-                ESP_LOGI(TAG, "Root advance -> %u", (unsigned)root_sel);
-            } else {
+            } else if (level == eUiSensor) {
                 sensor_sel = static_cast<uint8_t>(
                     (sensor_sel + 1U) % display_layout::kSensorMenuSelectCount);
                 (void)display_layout::draw_sensor_menu_bar(display, sensor_sel,
                                                            kColorDkGray, kColorGreen,
                                                            kColorWhite, kColorYellow);
-                ESP_LOGI(TAG, "Sensor advance -> %u", (unsigned)sensor_sel);
+            } else {
+                mag_sel = static_cast<uint8_t>(
+                    (mag_sel + 1U) % display_layout::kMagLiveMenuSelectCount);
+                drawMagLiveBar(display, mag_sel);
             }
         }
 
         if (prev_ok && !ok) {
             if (level == eUiRoot) {
                 if (root_sel == display_layout::eMenuFwd) {
-                    ESP_LOGI(TAG, "Forward (no-op, menu full)");
+                    ESP_LOGI(TAG, "Forward (no-op)");
                 } else if (root_sel == display_layout::eMenuSensor) {
                     level = eUiSensor;
                     sensor_sel = display_layout::eSensorIrCam;
@@ -129,32 +133,39 @@ extern "C" void app_main(void)
                     (void)display_layout::draw_sensor_menu_bar(display, sensor_sel,
                                                                kColorDkGray, kColorGreen,
                                                                kColorWhite, kColorYellow);
-                    ESP_LOGI(TAG, "Enter SENSOR submenu");
                 } else {
                     (void)display_layout::draw_mode_icon(display, root_sel,
                                                          kColorCyan, kColorBlack);
-                    ESP_LOGI(TAG, "Accept root mode %u", (unsigned)root_sel);
                 }
-            } else if (sensor_sel == display_layout::eSensorFwd) {
-                ESP_LOGI(TAG, "Forward (no-op, menu full)");
-            } else if (sensor_sel == display_layout::eSensorBack) {
-                if (mag_app_is_live()) {
+            } else if (level == eUiMagLive) {
+                if (mag_sel == display_layout::eMagLiveBack) {
                     mag_app_stop(display);
+                    level = eUiSensor;
+                    sensor_sel = display_layout::eSensorMag;
                     (void)display_layout::draw_sensor_menu_bar(display, sensor_sel,
                                                                kColorDkGray, kColorGreen,
                                                                kColorWhite, kColorYellow);
-                    ESP_LOGI(TAG, "Plot stopped; sensor submenu idle");
-                } else {
-                    level = eUiRoot;
-                    clearIconBand(display);
-                    (void)display_layout::draw_menu_bar(display, root_sel,
-                                                        kColorDkGray, kColorGreen,
-                                                        kColorWhite, kColorYellow);
-                    ESP_LOGI(TAG, "Back to root menu");
+                } else if (mag_sel == display_layout::eMagLiveMode) {
+                    (void)mag_app_cycle_view();
+                    drawMagLiveBar(display, mag_sel);
+                } else if (mag_sel == display_layout::eMagLiveAxis) {
+                    (void)mag_app_cycle_axis();
+                    drawMagLiveBar(display, mag_sel);
+                } else if (mag_sel == display_layout::eMagLiveUnit) {
+                    (void)mag_app_cycle_unit();
+                    drawMagLiveBar(display, mag_sel);
                 }
+            } else if (sensor_sel == display_layout::eSensorFwd) {
+                ESP_LOGI(TAG, "Forward (no-op)");
+            } else if (sensor_sel == display_layout::eSensorBack) {
+                level = eUiRoot;
+                clearIconBand(display);
+                (void)display_layout::draw_menu_bar(display, root_sel,
+                                                    kColorDkGray, kColorGreen,
+                                                    kColorWhite, kColorYellow);
             } else if (sensor_sel == display_layout::eSensorMag) {
                 if (mag_app_start(display) != ESP_OK) {
-                    (void)display.fillRect(proto_cfg::kMagPlotX0, proto_cfg::kMagPlotY0,
+                    (void)display.fillRect(0U, proto_cfg::kMagPlotY0,
                                            proto_cfg::kMagPlotX1, proto_cfg::kMagPlotY1,
                                            kColorBlack);
                     (void)display.drawString(8U, 8U, "MAG ERR", kColorRed);
@@ -162,7 +173,9 @@ extern "C" void app_main(void)
                                                                kColorDkGray, kColorGreen,
                                                                kColorWhite, kColorYellow);
                 } else {
-                    ESP_LOGI(TAG, "MAG live plot started");
+                    level = eUiMagLive;
+                    mag_sel = display_layout::eMagLiveMode;
+                    drawMagLiveBar(display, mag_sel);
                 }
             } else {
                 if (mag_app_is_live()) {
@@ -170,12 +183,11 @@ extern "C" void app_main(void)
                 }
                 (void)display_layout::draw_sensor_mode_icon(display, sensor_sel,
                                                             kColorCyan, kColorBlack);
-                ESP_LOGI(TAG, "Accept sensor mode %u", (unsigned)sensor_sel);
             }
         }
 
         if (mag_app_is_live()) {
-            mag_app_poll(display, sensor_sel);
+            mag_app_poll(display);
         }
 
         prev_adv = adv;
