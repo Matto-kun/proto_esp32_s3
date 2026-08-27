@@ -1,0 +1,30 @@
+{
+  "name": "st7789",
+  "version": "1.0.0",
+  "description": "LibDriver ST7789 TFT driver (vendored in proto_esp32_s3)",
+  "keywords": "st7789, display, spi",
+  "authors": {
+    "name": "Shifeng Li / LibDriver",
+    "url": "https://github.com/libdriver/st7789"
+  },
+  "license": "MIT",
+  "frameworks": "espidf",
+  "platforms": "espressif32",
+  "build": {
+    "srcDir": ".",
+    "includeDir": "src",
+    "flags": [
+      "-Iexample",
+      "-Iinterface",
+      "-Isrc"
+    ],
+    "unflags": [
+      "-fuse-cxa-atexit"
+    ],
+    "srcFilter": [
+      "-<*>",
+      "+<src/*.c>",
+      "+<example/*.c>"
+    ]
+  }
+}

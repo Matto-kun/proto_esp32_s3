@@ -1,0 +1,20 @@
+{
+    "buttons": {
+        "top": 6,
+        "bottom": 5
+    },
+    "led": 7,
+    "imu": {
+        "SDA": 9,
+        "SCL": 11
+    },
+    "screen": {
+        "backlight": 42,
+        "data_command": 40,
+        "reset": 41,
+        "spi": {
+            "SDA_MOSI": 35,
+            "SCK": 36
+        }
+    }
+}
