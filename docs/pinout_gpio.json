@@ -26,19 +26,19 @@
         "devices": {
             "bmi160": {
                 "role": "imu_bmi160",
-                "addr7": "0xD1"
+                "addr7": "0x69",
+                "chip_id": "0xD1"
             }
         }
     },
     "uart": {
-        "TX": 43,
-        "RX": 44,
-        "PPS": 1,
+        "TX": 2,
+        "RX": 1,
+        "PPS": 42,
         "baudrate": 9600,
         "devices": {
             "L76X_GNSS": {
-                "role": "gnss_l76k",
-                "addr7": "0x10"
+                "role": "gnss_l76k"
             }
         }
     },

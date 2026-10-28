@@ -17,10 +17,37 @@
 #include "display/display_api.hpp"
 #include "display/layout/screen_geom.hpp"
 #include "i2c_api.hpp"
+#include "uart_api.hpp"
+#include "ble_api.hpp"
 #include "sensors/hmc5983_api.hpp"
 #include "sensors/amg8833_api.hpp"
+#include "sensors/bmi160_api.hpp"
+#include "sensors/l76k_api.hpp"
 
 namespace proto_cfg {
+
+/* --- BLE bring-up (default peripheral; set BLE_TEST_ROLE=central to flip) --- */
+#ifndef BLE_TEST_ROLE_CENTRAL
+#define BLE_TEST_ROLE_CENTRAL 0
+#endif
+
+static constexpr const char* kBleDeviceName = kBleDefaultDeviceName;
+static constexpr const char* kBlePeerNameFilter = kBleDefaultDeviceName;
+static constexpr uint32_t kBleHeartbeatMs = 2000U;
+static constexpr uint32_t kBleScanMs = 15000U;
+static constexpr uint32_t kBleCentralWriteMs = 3000U;
+static constexpr uint32_t kBleCentralRescanMs = 5000U;
+
+static inline ble_cfg_t makeBleCfg(void)
+{
+    ble_cfg_t cfg = {};
+    cfg.device_name = kBleDeviceName;
+    cfg.auto_advertise = true;
+    cfg.scan_ms = kBleScanMs;
+    cfg.peer_name_filter = kBlePeerNameFilter;
+    return cfg;
+}
+
 
 /* --- Display / SPI (pinout_gpio.json) --- */
 static constexpr int8_t kPinMosi = 35;
@@ -39,9 +66,67 @@ static constexpr uint8_t kBtnAccept  = 6U;
 static constexpr uint8_t kBtnDebounceMs = 20U;
 static constexpr uint32_t kMainLoopPeriodMs = 5U;
 
+/* --- UART / L76K GNSS (pinout_gpio.json uart, MCU pins) --- */
+static constexpr int8_t  kPinGnssTx  = 2;
+static constexpr int8_t  kPinGnssRx  = 1;
+static constexpr int8_t  kPinGnssPps = 42;
+static constexpr uint32_t kGnssBaudHz = 9600U;
+static constexpr uint32_t kGnssPollMs = 2500U;
+
+static inline uart_cfg_t makeGnssUartCfg(void)
+{
+    uart_cfg_t cfg = {};
+    cfg.port         = eUartPort1;
+    cfg.tx_pin       = kPinGnssTx;
+    cfg.rx_pin       = kPinGnssRx;
+    cfg.baud_hz      = kGnssBaudHz;
+    cfg.rx_buf_bytes = 2048;
+    cfg.tx_buf_bytes = 512;
+    return cfg;
+}
+
+static inline l76k_cfg_t makeL76kCfg(void)
+{
+    l76k_cfg_t cfg = {};
+    cfg.pps_pin = kPinGnssPps;
+    /* Module streams NMEA by default; PMTK cfg can break Quectel LC76G. */
+    cfg.apply_nmea_cfg = false;
+    return cfg;
+}
+
+/* --- I2C2 / BMI160 (pinout_gpio.json i2c2; order confirmed by bring-up) --- */
+static constexpr int8_t  kPinImuSdaA = 9;
+static constexpr int8_t  kPinImuSclA = 11;
+static constexpr int8_t  kPinImuSdaB = 11;
+static constexpr int8_t  kPinImuSclB = 9;
+static constexpr uint32_t kI2c2ClkHz = 400000U;
+static constexpr uint32_t kImuPollMs = 200U;
+
+/* Confirmed bring-up: SDA=9 SCL=11 addr7=0x69 (SDO high). */
+static constexpr int8_t  kPinImuSda = kPinImuSdaA;
+static constexpr int8_t  kPinImuScl = kPinImuSclA;
+static constexpr uint8_t kImuAddr7  = bmi160_regs::kAddr7SdoHigh;
+
+static inline i2c_cfg_t makeImuI2cCfg(int8_t sda, int8_t scl)
+{
+    i2c_cfg_t cfg = {};
+    cfg.port    = eI2cPort1;
+    cfg.sda_pin = sda;
+    cfg.scl_pin = scl;
+    cfg.clk_hz  = kI2c2ClkHz;
+    return cfg;
+}
+
+static inline bmi160_cfg_t makeBmi160Cfg(uint8_t addr7)
+{
+    bmi160_cfg_t cfg = {};
+    cfg.addr7 = addr7;
+    return cfg;
+}
+
 /* --- I2C / HMC5983 + AMG8833 (pinout_gpio.json i2c) --- */
-static constexpr int8_t kPinI2cSda = 9;
-static constexpr int8_t kPinI2cScl = 11;
+static constexpr int8_t kPinI2cSda = 37;
+static constexpr int8_t kPinI2cScl = 36;
 static constexpr uint32_t kI2cClkHz = 400000U;
 
 static inline i2c_cfg_t makeI2cCfg(void)
