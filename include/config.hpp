@@ -17,8 +17,8 @@
 #include "display/display_api.hpp"
 #include "display/layout/screen_geom.hpp"
 #include "i2c_api.hpp"
+#include "sensors/hmc5983_api.hpp"
 #include "sensors/amg8833_api.hpp"
-#include "sensors/hmc5883l_api.hpp"
 
 namespace proto_cfg {
 
@@ -39,7 +39,7 @@ static constexpr uint8_t kBtnAccept  = 6U;
 static constexpr uint8_t kBtnDebounceMs = 20U;
 static constexpr uint32_t kMainLoopPeriodMs = 5U;
 
-/* --- I2C / HMC5883L (pinout_gpio.json imu) --- */
+/* --- I2C / HMC5983 + AMG8833 (pinout_gpio.json i2c) --- */
 static constexpr int8_t kPinI2cSda = 9;
 static constexpr int8_t kPinI2cScl = 11;
 static constexpr uint32_t kI2cClkHz = 400000U;
@@ -54,13 +54,15 @@ static inline i2c_cfg_t makeI2cCfg(void)
     return cfg;
 }
 
-static inline hmc5883l_cfg_t makeHmcCfg(void)
+static inline hmc5983_cfg_t makeHmc5983Cfg(void)
 {
-    hmc5883l_cfg_t cfg = {};
-    cfg.mode = hmc5883l_regs::eHmcModeContinuous;
-    cfg.odr  = hmc5883l_regs::eHmcOdr75Hz;
-    cfg.samples = hmc5883l_regs::eHmcSamples8;
-    cfg.gain    = hmc5883l_regs::eHmcGain13Ga;
+    hmc5983_cfg_t cfg = {};
+    cfg.mode = hmc5983_regs::eHmc5983ModeContinuous;
+    cfg.odr  = hmc5983_regs::eHmc5983Odr220Hz;
+    cfg.samples = hmc5983_regs::eHmc5983Samples1;
+    cfg.gain    = hmc5983_regs::eHmc5983Gain13Ga;
+    cfg.temp_sensor = true;
+    cfg.meas = hmc5983_regs::eHmc5983MeasNormal;
     return cfg;
 }
 
@@ -75,8 +77,8 @@ static inline amg8833_cfg_t makeAmgCfg(void)
 
 /* --- Magnetometer plot --- */
 static constexpr uint32_t kMagPlotWindowMs    = 1000U;
-/** ~75 Hz poll to match max HMC5883L ODR. */
-static constexpr uint32_t kMagSamplePeriodMs  = 13U;
+/** ~220 Hz poll to match HMC5983 max ODR. */
+static constexpr uint32_t kMagSamplePeriodMs  = 4U;
 static constexpr float    kMagSampleRateHz =
     1000.0f / static_cast<float>(kMagSamplePeriodMs);
 static constexpr float    kMagScaleMargin     = 1.25f;
@@ -111,11 +113,26 @@ static_assert(kMagMaxSamples <= 256U, "mag ring buffer too large");
 static constexpr uint32_t kIrSamplePeriodMs = 100U;
 static constexpr uint8_t  kIrGridSize      = 8U;
 
+/** Status text band above heatmap (blit must not overwrite). */
+static constexpr uint16_t kIrStatusBandH = 16U;
 static constexpr uint16_t kIrHeatX0 = 0U;
-static constexpr uint16_t kIrHeatY0 = 0U;
+static constexpr uint16_t kIrHeatY0 = kIrStatusBandH;
 static constexpr uint16_t kIrHeatX1 = display_layout::kScreenW - 1U;
 static constexpr uint16_t kIrHeatY1 =
     static_cast<uint16_t>(display_layout::kBarY - 1U);
+
+/** Autoscale: EMA + min span + thermistor-relative window. */
+static constexpr float kIrScaleAlpha      = 0.15f;
+static constexpr float kIrMinSpanC        = 8.0f;
+static constexpr float kIrBelowAmbientC   = 2.0f;
+static constexpr float kIrAboveAmbientC   = 10.0f;
+
+/** Top labels: 2 Hz refresh; redraw only when string changes. */
+static constexpr uint32_t kIrLabelPeriodMs = 500U;
+static constexpr float    kIrLabelAlpha   = 0.25f;
+
+/** Unsharp amount for levels 0..3 (applied on 8x8 before upsample). */
+static constexpr float kIrSharpenAmount[4] = {0.0f, 0.6f, 1.2f, 1.8f};
 
 static constexpr uint16_t kIrStatusFgColor = kColorWhite;
 static constexpr uint16_t kIrStatusBgColor = kColorBlack;

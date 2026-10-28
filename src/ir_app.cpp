@@ -10,6 +10,7 @@
 #include "config.hpp"
 #include "ir_heatmap.hpp"
 
+#include "display/layout/ir_live_menu.hpp"
 #include "i2c_api.hpp"
 #include "sensors/amg8833_api.hpp"
 
@@ -32,7 +33,7 @@ static uint32_t nowMs(void)
 
 static void clearHeatArea(Display& display)
 {
-    (void)display.fillRect(proto_cfg::kIrHeatX0, proto_cfg::kIrHeatY0,
+    (void)display.fillRect(0U, 0U,
                            proto_cfg::kIrHeatX1, proto_cfg::kIrHeatY1,
                            proto_cfg::kIrStatusBgColor);
 }
@@ -109,4 +110,55 @@ void ir_app_poll(Display& display)
     }
 
     (void)s_heat.render(display, frame, therm);
+}
+
+uint8_t ir_app_filter_mode(void)
+{
+    return s_heat.filterMode();
+}
+
+uint8_t ir_app_sharp_level(void)
+{
+    return s_heat.sharpLevel();
+}
+
+uint8_t ir_app_rot_mode(void)
+{
+    return s_heat.rotMode();
+}
+
+bool ir_app_flip_on(void)
+{
+    return s_heat.flipOn();
+}
+
+uint8_t ir_app_cycle_filter(void)
+{
+    const uint8_t next = static_cast<uint8_t>(
+        (s_heat.filterMode() + 1U) % display_layout::kIrFilterModeCount);
+    s_heat.setFilterMode(next);
+    return next;
+}
+
+uint8_t ir_app_cycle_level(void)
+{
+    const uint8_t next = static_cast<uint8_t>(
+        (s_heat.sharpLevel() + 1U) % display_layout::kIrSharpLevelCount);
+    s_heat.setSharpLevel(next);
+    return next;
+}
+
+uint8_t ir_app_cycle_rot(void)
+{
+    const uint8_t next = static_cast<uint8_t>(
+        (s_heat.rotMode() + 1U) % display_layout::kIrRotModeCount);
+    s_heat.setRotMode(next);
+    return next;
+}
+
+bool ir_app_cycle_flip(void)
+{
+    const bool next = !s_heat.flipOn();
+    s_heat.setFlip(next);
+    return next;
 }

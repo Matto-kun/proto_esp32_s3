@@ -47,6 +47,8 @@ static void drawIrLiveBar(Display& display, uint8_t ir_sel)
 {
     (void)display_layout::draw_ir_live_menu_bar(
         display, ir_sel,
+        ir_app_filter_mode(), ir_app_sharp_level(),
+        ir_app_rot_mode(), ir_app_flip_on(),
         kColorDkGray, kColorGreen, kColorWhite, kColorYellow);
 }
 
@@ -93,7 +95,7 @@ extern "C" void app_main(void)
     uint8_t root_sel   = display_layout::eMenuBle;
     uint8_t sensor_sel = display_layout::eSensorIrCam;
     uint8_t mag_sel    = display_layout::eMagLiveMode;
-    uint8_t ir_sel     = display_layout::eIrLiveBack;
+    uint8_t ir_sel     = display_layout::eIrLiveFilter;
     bool prev_adv = true;
     bool prev_ok  = true;
 
@@ -127,7 +129,9 @@ extern "C" void app_main(void)
                     (mag_sel + 1U) % display_layout::kMagLiveMenuSelectCount);
                 drawMagLiveBar(display, mag_sel);
             } else if (level == eUiIrLive) {
-                /* Single Back slot — Advance is a no-op. */
+                ir_sel = static_cast<uint8_t>(
+                    (ir_sel + 1U) % display_layout::kIrLiveMenuSelectCount);
+                drawIrLiveBar(display, ir_sel);
             }
         }
 
@@ -178,6 +182,18 @@ extern "C" void app_main(void)
                     (void)display_layout::draw_sensor_menu_bar(display, sensor_sel,
                                                                kColorDkGray, kColorGreen,
                                                                kColorWhite, kColorYellow);
+                } else if (ir_sel == display_layout::eIrLiveFilter) {
+                    (void)ir_app_cycle_filter();
+                    drawIrLiveBar(display, ir_sel);
+                } else if (ir_sel == display_layout::eIrLiveLevel) {
+                    (void)ir_app_cycle_level();
+                    drawIrLiveBar(display, ir_sel);
+                } else if (ir_sel == display_layout::eIrLiveRot) {
+                    (void)ir_app_cycle_rot();
+                    drawIrLiveBar(display, ir_sel);
+                } else if (ir_sel == display_layout::eIrLiveFlip) {
+                    (void)ir_app_cycle_flip();
+                    drawIrLiveBar(display, ir_sel);
                 }
             } else if (sensor_sel == display_layout::eSensorFwd) {
                 ESP_LOGI(TAG, "Forward (no-op)");
@@ -209,7 +225,7 @@ extern "C" void app_main(void)
                     mag_app_stop(display);
                 }
                 if (ir_app_start(display) != ESP_OK) {
-                    (void)display.fillRect(proto_cfg::kIrHeatX0, proto_cfg::kIrHeatY0,
+                    (void)display.fillRect(0U, 0U,
                                            proto_cfg::kIrHeatX1, proto_cfg::kIrHeatY1,
                                            kColorBlack);
                     (void)display.drawString(8U, 8U, "IR ERR", kColorRed);
@@ -218,7 +234,7 @@ extern "C" void app_main(void)
                                                                kColorWhite, kColorYellow);
                 } else {
                     level = eUiIrLive;
-                    ir_sel = display_layout::eIrLiveBack;
+                    ir_sel = display_layout::eIrLiveFilter;
                     drawIrLiveBar(display, ir_sel);
                 }
             } else {

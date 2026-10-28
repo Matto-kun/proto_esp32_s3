@@ -1,14 +1,48 @@
 {
     "buttons": {
-        "top": 6,
+        "top_disconnected": 6,
         "bottom": 5
     },
     "led": 7,
-    "imu": {
-        "SDA": 9,
-        "SCL": 11
+    "i2c": {
+        "SDA": 37,
+        "SCL": 36,
+        "clock_hz": 400000,
+        "devices": {
+            "hmc5983": {
+                "role": "magnetometer_hmc5983",
+                "addr7": "0x1E"
+            },
+            "amg8833": {
+                "role": "ircamera_amg8833",
+                "addr7": "0x69"
+            }
+        }
     },
-    "screen": {
+    "i2c2": {
+        "SDA": 9,
+        "SCL": 11,
+        "clock_hz": 400000,
+        "devices": {
+            "bmi160": {
+                "role": "imu_bmi160",
+                "addr7": "0xD1"
+            }
+        }
+    },
+    "uart": {
+        "TX": 43,
+        "RX": 44,
+        "PPS": 1,
+        "baudrate": 9600,
+        "devices": {
+            "L76X_GNSS": {
+                "role": "gnss_l76k",
+                "addr7": "0x10"
+            }
+        }
+    },
+    "screen_not_connected": {
         "backlight": 42,
         "data_command": 40,
         "reset": 41,
@@ -16,5 +50,12 @@
             "SDA_MOSI": 35,
             "SCK": 36
         }
+    },
+    "microsd_not_connected": {
+        "interface": "spi",
+        "SDO_MISO": 37,
+        "SDA_MOSI": 35,
+        "SCK": 36,
+        "CS": 15
     }
 }

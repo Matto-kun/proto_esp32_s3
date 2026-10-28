@@ -13,7 +13,7 @@
 
 #include "display/layout/mag_live_menu.hpp"
 #include "i2c_api.hpp"
-#include "sensors/hmc5883l_api.hpp"
+#include "sensors/hmc5983_api.hpp"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -22,7 +22,7 @@
 static const char* TAG = "MAG_APP";
 
 static I2C       s_bus(proto_cfg::makeI2cCfg());
-static Hmc5883l  s_mag(s_bus, proto_cfg::makeHmcCfg());
+static Hmc5983   s_mag(s_bus, proto_cfg::makeHmc5983Cfg());
 static MagPlot   s_plot;
 static bool      s_live = false;
 static uint32_t  s_last_sample_ms = 0U;
@@ -61,7 +61,7 @@ esp_err_t mag_app_start(Display& display)
 
     err = s_mag.init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "HMC5883L init failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "HMC5983 init failed: %s", esp_err_to_name(err));
         (void)s_bus.deinit();
         mag_fft_deinit();
         return err;
@@ -157,12 +157,14 @@ void mag_app_poll(Display& display)
         return;
     }
 
-    hmc5883l_gauss_t gauss = {};
-    if (s_mag.readGauss(gauss) == ESP_OK) {
+    hmc5983_gauss_t gauss = {};
+    const esp_err_t err = s_mag.readGauss(gauss);
+    if (err == ESP_OK) {
         s_plot.pushSample(gauss.x, gauss.y, gauss.z, t);
         (void)s_plot.draw(display, t);
-    } else {
-        ESP_LOGW(TAG, "readGauss failed");
+        s_last_sample_ms = t;
+    } else if (err != ESP_ERR_NOT_FINISHED) {
+        ESP_LOGW(TAG, "readGauss failed: %s", esp_err_to_name(err));
+        s_last_sample_ms = t;
     }
-    s_last_sample_ms = t;
 }
