@@ -124,9 +124,9 @@ static inline bmi160_cfg_t makeBmi160Cfg(uint8_t addr7)
     return cfg;
 }
 
-/* --- I2C / HMC5983 + AMG8833 (pinout_gpio.json i2c) --- */
-static constexpr int8_t kPinI2cSda = 37;
-static constexpr int8_t kPinI2cScl = 36;
+/* --- I2C / HMC5983 + AMG8833 (bring-up: SDA=39 SCL=38) --- */
+static constexpr int8_t kPinI2cSda = 39;
+static constexpr int8_t kPinI2cScl = 38;
 static constexpr uint32_t kI2cClkHz = 400000U;
 
 static inline i2c_cfg_t makeI2cCfg(void)

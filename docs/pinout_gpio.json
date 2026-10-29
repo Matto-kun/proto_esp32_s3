@@ -4,18 +4,21 @@
         "bottom": 5
     },
     "led": 7,
+    "rgb": 48,
     "i2c": {
-        "SDA": 37,
-        "SCL": 36,
+        "SDA": 39,
+        "SCL": 38,
         "clock_hz": 400000,
         "devices": {
             "hmc5983": {
                 "role": "magnetometer_hmc5983",
-                "addr7": "0x1E"
+                "addr7": "0x1E",
+                "drdy": 45
             },
             "amg8833": {
                 "role": "ircamera_amg8833",
-                "addr7": "0x69"
+                "addr7": "0x69",
+                "int": 47
             }
         }
     },
