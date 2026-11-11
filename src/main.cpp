@@ -1,147 +1,48 @@
 /**
  * @file        main.cpp
- * @brief       BLE bring-up: peripheral (default) or central via BLE_TEST_ROLE
- * @author      Mat RB
- * @date        2026-10-28
- *
- * @details
- *   Peripheral: advertise as ESP32-S3-BLE, status heartbeats, log RX writes.
- *   Central: scan for that name / default service UUID, subscribe, write RX.
- *   Build central with: build_flags = -DBLE_TEST_ROLE_CENTRAL=1
+ * @brief       QMC5883P logger: microSD plus Wi-Fi SoftAP
  */
 
 #include "config.hpp"
 
-#include "ble_api.hpp"
+#include "app_mag.hpp"
+#include "app_sd_log.hpp"
+#include "app_wifi.hpp"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include <stdio.h>
-#include <string.h>
+static const char* TAG = "APP_MAIN";
 
-static const char* TAG = "BLE_TEST";
-
-static void logPayload(const char* label, const uint8_t* data, size_t len)
+static void park(void)
 {
-    if (data == nullptr || len == 0U) {
-        ESP_LOGI(TAG, "%s: (empty)", label);
-        return;
-    }
-    char printable[80];
-    const size_t n =
-        (len < sizeof(printable) - 1U) ? len : (sizeof(printable) - 1U);
-    for (size_t i = 0; i < n; ++i) {
-        const char c = static_cast<char>(data[i]);
-        printable[i] = (c >= 32 && c < 127) ? c : '.';
-    }
-    printable[n] = '\0';
-    ESP_LOGI(TAG, "%s (%u): \"%s\"", label, (unsigned)len, printable);
-}
-
-static void onConn(bool connected, uint16_t handle)
-{
-    ESP_LOGI(TAG, "connected=%d handle=%u", (int)connected, (unsigned)handle);
-}
-
-static void onRx(const uint8_t* data, size_t len)
-{
-    logPayload("RX", data, len);
-}
-
-static void onStatusNotify(const uint8_t* data, size_t len)
-{
-    logPayload("status", data, len);
-}
-
-static void onTxNotify(const uint8_t* data, size_t len)
-{
-    logPayload("TX", data, len);
-}
-
-#if BLE_TEST_ROLE_CENTRAL
-
-static void runCentral(void)
-{
-    ble_cfg_t cfg = proto_cfg::makeBleCfg();
-    BleCentral cent(cfg);
-    cent.setConnCallback(onConn);
-    cent.setStatusNotifyCallback(onStatusNotify);
-    cent.setTxNotifyCallback(onTxNotify);
-
-    if (cent.init() != ESP_OK) {
-        ESP_LOGE(TAG, "BleCentral init failed");
-        return;
-    }
-
-    ESP_LOGI(TAG, "central mode; peer filter=\"%s\"", cfg.peer_name_filter);
-
-    uint32_t writes = 0;
     while (true) {
-        if (!cent.isConnected()) {
-            ESP_LOGI(TAG, "scanning...");
-            (void)cent.startScan();
-            vTaskDelay(pdMS_TO_TICKS(proto_cfg::kBleCentralRescanMs));
-            continue;
-        }
-        if (cent.isReady()) {
-            char msg[32];
-            snprintf(msg, sizeof(msg), "ping %lu", (unsigned long)writes);
-            if (cent.writeRx(msg) == ESP_OK) {
-                ESP_LOGI(TAG, "wrote \"%s\"", msg);
-                ++writes;
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(proto_cfg::kBleCentralWriteMs));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
-
-#else
-
-static void runPeripheral(void)
-{
-    ble_cfg_t cfg = proto_cfg::makeBleCfg();
-    BlePeripheral peri(cfg);
-    peri.setConnCallback(onConn);
-    peri.setRxCallback(onRx);
-
-    if (peri.init() != ESP_OK) {
-        ESP_LOGE(TAG, "BlePeripheral init failed");
-        return;
-    }
-
-    ESP_LOGI(TAG, "peripheral mode; name=\"%s\"", cfg.device_name);
-
-    uint32_t beat = 0;
-    bool sent_connected = false;
-    while (true) {
-        if (peri.isConnected()) {
-            if (!sent_connected) {
-                (void)peri.notifyStatus("connected");
-                sent_connected = true;
-            }
-            char msg[48];
-            snprintf(msg, sizeof(msg), "heartbeat %lu", (unsigned long)beat);
-            (void)peri.notifyStatus(msg);
-            ++beat;
-        } else {
-            sent_connected = false;
-        }
-        vTaskDelay(pdMS_TO_TICKS(proto_cfg::kBleHeartbeatMs));
-    }
-}
-
-#endif
 
 extern "C" void app_main(void)
 {
-    vTaskDelay(pdMS_TO_TICKS(200));
-#if BLE_TEST_ROLE_CENTRAL
-    ESP_LOGI(TAG, "BLE_TEST_ROLE=central");
-    runCentral();
-#else
-    ESP_LOGI(TAG, "BLE_TEST_ROLE=peripheral");
-    runPeripheral();
-#endif
+    ESP_LOGI(TAG, "DRDY GPIO %d stored, Status.RDY gates samples",
+             static_cast<int>(proto_cfg::kPinMagDrdy));
+
+    if (app_sd_init() != ESP_OK) {
+        ESP_LOGE(TAG, "microSD mount FAILED");
+        park();
+    }
+    ESP_LOGI(TAG, "microSD mounted at /sdcard");
+
+    if (app_mag_init() != ESP_OK) {
+        ESP_LOGE(TAG, "QMC5883P init FAILED");
+        ESP_LOGW(TAG, "SoftAP still starts so the phone can connect");
+    } else {
+        ESP_LOGI(TAG, "QMC5883P id 0x80 at address 0x%02X",
+                 static_cast<unsigned>(proto_cfg::kQmcAddr7));
+    }
+
+    if (app_wifi_start() != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi start FAILED");
+        park();
+    }
 }

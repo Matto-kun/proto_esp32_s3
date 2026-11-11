@@ -14,9 +14,9 @@
 
 #include <stdint.h>
 
-#include "display/display_api.hpp"
-#include "display/layout/screen_geom.hpp"
 #include "i2c_api.hpp"
+#include "sd_api.hpp"
+#include "sensors/qmc5883p_api.hpp"
 #include "uart_api.hpp"
 #include "ble_api.hpp"
 #include "sensors/hmc5983_api.hpp"
@@ -174,18 +174,17 @@ static constexpr uint8_t  kMagPlotPadPx       = 2U;
 static constexpr uint16_t kMagFftN = 128U;
 static constexpr uint16_t kMagFftBins = kMagFftN / 2U;
 
-static constexpr uint16_t kMagColorX = kColorRed;
-static constexpr uint16_t kMagColorY = kColorGreen;
-static constexpr uint16_t kMagColorZ = kColorBlue;
-static constexpr uint16_t kMagColorAbs = kColorYellow;
-static constexpr uint16_t kMagPlotBgColor = kColorBlack;
-static constexpr uint16_t kMagPlotMeanLineColor = kColorDkGray;
+static constexpr uint16_t kMagColorX = 0xF800U;
+static constexpr uint16_t kMagColorY = 0x07E0U;
+static constexpr uint16_t kMagColorZ = 0x001FU;
+static constexpr uint16_t kMagColorAbs = 0xFFE0U;
+static constexpr uint16_t kMagPlotBgColor = 0x0000U;
+static constexpr uint16_t kMagPlotMeanLineColor = 0x4208U;
 
 static constexpr uint16_t kMagPlotX0 = 40U;
 static constexpr uint16_t kMagPlotY0 = 0U;
-static constexpr uint16_t kMagPlotX1 = display_layout::kScreenW - 1U;
-static constexpr uint16_t kMagPlotY1 =
-    static_cast<uint16_t>(display_layout::kBarY - 1U);
+static constexpr uint16_t kMagPlotX1 = 239U;
+static constexpr uint16_t kMagPlotY1 = 199U;
 
 /** Ring must hold FFT history (and at least ~1 s for TIME window). */
 static constexpr uint16_t kMagMaxSamples = kMagFftN;
@@ -202,9 +201,8 @@ static constexpr uint8_t  kIrGridSize      = 8U;
 static constexpr uint16_t kIrStatusBandH = 16U;
 static constexpr uint16_t kIrHeatX0 = 0U;
 static constexpr uint16_t kIrHeatY0 = kIrStatusBandH;
-static constexpr uint16_t kIrHeatX1 = display_layout::kScreenW - 1U;
-static constexpr uint16_t kIrHeatY1 =
-    static_cast<uint16_t>(display_layout::kBarY - 1U);
+static constexpr uint16_t kIrHeatX1 = 239U;
+static constexpr uint16_t kIrHeatY1 = 199U;
 
 /** Autoscale: EMA + min span + thermistor-relative window. */
 static constexpr float kIrScaleAlpha      = 0.15f;
@@ -219,8 +217,68 @@ static constexpr float    kIrLabelAlpha   = 0.25f;
 /** Unsharp amount for levels 0..3 (applied on 8x8 before upsample). */
 static constexpr float kIrSharpenAmount[4] = {0.0f, 0.6f, 1.2f, 1.8f};
 
-static constexpr uint16_t kIrStatusFgColor = kColorWhite;
-static constexpr uint16_t kIrStatusBgColor = kColorBlack;
+static constexpr uint16_t kIrStatusFgColor = 0xFFFFU;
+static constexpr uint16_t kIrStatusBgColor = 0x0000U;
+
+/* --- QMC5883P + microSD logger (pinout_gpio_mag_only.json) --- */
+/** DRDY is GPIO 10. The driver polls the status bit. No ISR is attached. */
+static constexpr int8_t  kPinMagSda  = 46;
+static constexpr int8_t  kPinMagScl  = 8;
+static constexpr int8_t  kPinMagDrdy = 10;
+static constexpr uint8_t kQmcAddr7   = 0x2CU;
+static constexpr uint32_t kMagI2cHz  = 400000U;
+static constexpr uint32_t kQmcPollTimeoutMs = 20U;
+
+static constexpr int8_t  kPinSdMosi = 35;
+static constexpr int8_t  kPinSdMiso = 37;
+static constexpr int8_t  kPinSdSck  = 36;
+static constexpr int8_t  kPinSdCs   = 38;
+
+static constexpr const char* kWifiApSsid = "ProtoMag";
+static constexpr const char* kWifiApPass = "protomag1";
+static constexpr uint8_t  kWifiApChannel = 1U;
+static constexpr uint8_t  kWifiApMaxClients = 1U;
+static constexpr uint16_t kWifiTcpPort = 3333U;
+
+/** 1 gauss = 100 microtesla. Wire unit is uT. */
+static constexpr float kGaussToUt = 100.0f;
+
+static inline i2c_cfg_t makeMagI2cCfg(void)
+{
+    i2c_cfg_t cfg;
+    cfg.port    = eI2cPort0;
+    cfg.sda_pin = kPinMagSda;
+    cfg.scl_pin = kPinMagScl;
+    cfg.clk_hz  = kMagI2cHz;
+    cfg.enable_internal_pullup = false;
+    return cfg;
+}
+
+static inline qmc5883p_cfg_t makeQmc5883pCfg(void)
+{
+    qmc5883p_cfg_t cfg;
+    cfg.addr7 = kQmcAddr7;
+    cfg.mode = qmc5883p_regs::eQmcModeNormal;
+    cfg.odr = qmc5883p_regs::eQmcOdr200Hz;
+    cfg.osr1 = qmc5883p_regs::eQmcOsr1_8;
+    cfg.osr2 = qmc5883p_regs::eQmcOsr2_1;
+    cfg.range = qmc5883p_regs::eQmcRange8Ga;
+    cfg.set_reset = qmc5883p_regs::eQmcSetResetOn;
+    cfg.poll_timeout_ms = kQmcPollTimeoutMs;
+    return cfg;
+}
+
+static inline sd_cfg_t makeSdCfg(void)
+{
+    sd_cfg_t cfg;
+    cfg.host = eSdSpiHost2;
+    cfg.mosi_pin = kPinSdMosi;
+    cfg.miso_pin = kPinSdMiso;
+    cfg.sclk_pin = kPinSdSck;
+    cfg.cs_pin = kPinSdCs;
+    cfg.format_if_mount_failed = false;
+    return cfg;
+}
 
 } /* namespace proto_cfg */
 

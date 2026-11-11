@@ -1,0 +1,22 @@
+{
+    "i2c": {
+        "SDA": 46,
+        "SCL": 8,
+        "DRDY": 10,
+        "clock_hz": 400000,
+        "devices": {
+            "qmc5883p": {
+                "role": "magnetometer_qmc5883p",
+                "addr7": "0x2C",
+                "id": "0x80"
+            }
+        }
+    },
+    "microsd": {
+        "interface": "spi",
+        "SDO_MISO": 37,
+        "SDA_MOSI": 35,
+        "SCK": 36,
+        "CS": 38
+    }
+}
