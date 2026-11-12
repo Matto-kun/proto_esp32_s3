@@ -24,8 +24,10 @@ esp_err_t app_sd_start_session(void);
 
 /**
  * @brief Append one magnetometer row. Unit is uT.
+ * @param rate_hz Active output rate in hertz.
+ * @note Above 200 Hz the writer stores several lines, then writes that block.
  */
-esp_err_t app_sd_write_mag(uint32_t t_ms, float x_ut, float y_ut, float z_ut);
+esp_err_t app_sd_write_mag(uint32_t t_ms, float x_ut, float y_ut, float z_ut, float rate_hz);
 
 /**
  * @brief Append one FFT window. bins is the length of each array.

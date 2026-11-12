@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The SoftAP stays off for 3 seconds after boot. The default transmit power is 8 dBm.
 - Above 200 Hz the TCP task sends about 50 raw frames each second.
 - The TCP task still sends every FFT frame.
 

@@ -3,6 +3,11 @@
 
 Join the SoftAP ProtoMag (passphrase protomag1) before you run this script.
 The script does not change the host Wi-Fi network.
+
+The default run checks 200 Hz, gain 8 G, chip id 80, and fft_n 128.
+The config command also sends range_ga 8.
+Use --rate 1500 --range 30 for the fast check. The device snaps the rate to
+200 or 1500, and the range to 2, 8, 12, or 30.
 """
 
 import socket
@@ -34,8 +39,8 @@ def put_uint(value):
     return put_type(0, value)
 
 
-def encode_config(rate_hz):
-    # Map of 4 pairs: cmd, mode, sensors, rate_hz.
+def encode_config(rate_hz, range_ga):
+    # Map of 5 pairs: cmd, mode, sensors, rate_hz, range_ga.
     body = b"".join([
         put_text("cmd"),
         put_text("config"),
@@ -45,8 +50,10 @@ def encode_config(rate_hz):
         put_type(4, 1) + put_text("mag"),
         put_text("rate_hz"),
         put_uint(rate_hz),
+        put_text("range_ga"),
+        put_uint(range_ga),
     ])
-    return put_type(5, 4) + body
+    return put_type(5, 5) + body
 
 
 def encode_verb(verb):
@@ -155,13 +162,67 @@ def as_float(value):
     return float(value)
 
 
+def snap_rate(rate):
+    if abs(rate - 1500) < abs(rate - 200):
+        return 1500
+    return 200
+
+
+def snap_range(ga):
+    choices = (2, 8, 12, 30)
+    best = choices[0]
+    best_delta = abs(ga - best)
+    for item in choices[1:]:
+        delta = abs(ga - item)
+        if delta < best_delta:
+            best = item
+            best_delta = delta
+    return best
+
+
+def parse_args(argv):
+    host = HOST
+    port = PORT
+    rate = 200
+    gain = 8
+    positionals = []
+    i = 1
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--rate":
+            i += 1
+            if i >= len(argv):
+                raise ValueError("--rate needs a number")
+            rate = int(argv[i])
+        elif arg == "--range":
+            i += 1
+            if i >= len(argv):
+                raise ValueError("--range needs a number")
+            gain = int(argv[i])
+        elif arg in ("-h", "--help"):
+            print("usage: wifi_smoke.py [host] [port] [--rate 200|1500] [--range G]")
+            return None
+        else:
+            positionals.append(arg)
+        i += 1
+    if len(positionals) >= 1:
+        host = positionals[0]
+    if len(positionals) >= 2:
+        port = int(positionals[1])
+    return host, port, rate, gain
+
+
 def main():
-    host = sys.argv[1] if len(sys.argv) > 1 else HOST
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else PORT
+    parsed = parse_args(sys.argv)
+    if parsed is None:
+        return 0
+    host, port, rate, gain = parsed
+    expect_rate = snap_rate(rate)
+    expect_gain = snap_range(gain)
     sock = socket.create_connection((host, port), timeout=5)
     sock.settimeout(15)
     try:
-        sock.sendall(frame(encode_config(200)))
+        sock.sendall(frame(encode_config(rate, gain)))
         reply = recv_map(sock)
         if reply.get("rsp") != "config":
             return fail("rsp is %r" % reply.get("rsp"))
@@ -169,13 +230,17 @@ def main():
             return fail("config ok is false: %r" % reply)
         if reply.get("chip_id") != "80":
             return fail("chip_id is %r" % reply.get("chip_id"))
-        if as_float(reply.get("odr_hz")) != 200.0:
+        if as_float(reply.get("odr_hz")) != float(expect_rate):
             return fail("odr_hz is %r" % reply.get("odr_hz"))
-        if as_float(reply.get("gain_ga")) != 8.0:
+        if as_float(reply.get("gain_ga")) != float(expect_gain):
             return fail("gain_ga is %r" % reply.get("gain_ga"))
         if int(reply.get("fft_n")) != 128:
             return fail("fft_n is %r" % reply.get("fft_n"))
-        print("config ok odr_hz=200 gain_ga=8 fft_n=128 chip_id=80")
+        if expect_rate == 200 and expect_gain == 8:
+            print("config ok odr_hz=200 gain_ga=8 fft_n=128 chip_id=80")
+        else:
+            print("config ok odr_hz=%s gain_ga=%s fft_n=128 chip_id=80" % (
+                expect_rate, expect_gain))
 
         sock.sendall(frame(encode_verb("start")))
         saw_mag = False
@@ -195,6 +260,10 @@ def main():
                     bins = msg.get(key)
                     if not isinstance(bins, list) or len(bins) != BINS:
                         return fail("%s len %s" % (key, None if bins is None else len(bins)))
+                df_hz = as_float(msg.get("df_hz"))
+                expect_df = float(expect_rate) / 128.0
+                if abs(df_hz - expect_df) > 0.001:
+                    return fail("df_hz is %r" % msg.get("df_hz"))
                 saw_fft = True
                 print("mag_fft bins=%d df_hz=%s" % (BINS, msg.get("df_hz")))
         sock.sendall(frame(encode_verb("stop")))

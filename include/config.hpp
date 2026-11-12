@@ -228,11 +228,57 @@ static constexpr int8_t  kPinMagDrdy = 10;
 static constexpr uint8_t kQmcAddr7   = 0x2CU;
 static constexpr uint32_t kMagI2cHz  = 400000U;
 static constexpr uint32_t kQmcPollTimeoutMs = 20U;
+/** DRDY wait at 1500 Hz. This span covers a few sample periods. */
+static constexpr uint32_t kQmcFastPollTimeoutMs = 4U;
+static constexpr float kMagRate200Hz = 200.0f;
+static constexpr float kMagRate1500Hz = 1500.0f;
+static constexpr float kMagRange2Ga = 2.0f;
+static constexpr float kMagRange8Ga = 8.0f;
+static constexpr float kMagRange12Ga = 12.0f;
+static constexpr float kMagRange30Ga = 30.0f;
+
+/** Normal mode at 200 Hz. OSR1 is 8. OSR2 is 1. */
+static inline void applyQmcRate200(qmc5883p_cfg_t& cfg)
+{
+    cfg.mode = qmc5883p_regs::eQmcModeNormal;
+    cfg.odr = qmc5883p_regs::eQmcOdr200Hz;
+    cfg.osr1 = qmc5883p_regs::eQmcOsr1_8;
+    cfg.osr2 = qmc5883p_regs::eQmcOsr2_1;
+    cfg.poll_timeout_ms = kQmcPollTimeoutMs;
+}
+
+/** Continuous mode at 1500 Hz. The ODR field does not set this rate. */
+static inline void applyQmcRate1500(qmc5883p_cfg_t& cfg)
+{
+    cfg.mode = qmc5883p_regs::eQmcModeContinuous;
+    // The chip ignores ODR in continuous mode. The field keeps a defined code.
+    cfg.odr = qmc5883p_regs::eQmcOdr200Hz;
+    cfg.osr1 = qmc5883p_regs::eQmcOsr1_1;
+    cfg.osr2 = qmc5883p_regs::eQmcOsr2_1;
+    cfg.poll_timeout_ms = kQmcFastPollTimeoutMs;
+}
 
 static constexpr int8_t  kPinSdMosi = 35;
 static constexpr int8_t  kPinSdMiso = 37;
 static constexpr int8_t  kPinSdSck  = 36;
 static constexpr int8_t  kPinSdCs   = 38;
+
+/**
+ * Transmit power codes for esp_wifi_set_max_tx_power().
+ * The unit is 0.25 dBm. The name is the power the chip keeps.
+ */
+enum class eWifiTxPower : int8_t {
+    eWifiTx20Dbm = 80,
+    eWifiTx11Dbm = 44,
+    eWifiTx8Dbm = 34,
+    eWifiTx2Dbm = 8,
+};
+
+/** Radio stays off for this time so the supply capacitors can charge. */
+static constexpr uint32_t kWifiStartDelayMs = 3000U;
+
+/** Selected SoftAP power. Change this line before a new flash. */
+static constexpr eWifiTxPower kWifiTxPower = eWifiTxPower::eWifiTx20Dbm;
 
 static constexpr const char* kWifiApSsid = "ProtoMag";
 static constexpr const char* kWifiApPass = "protomag1";
@@ -258,13 +304,9 @@ static inline qmc5883p_cfg_t makeQmc5883pCfg(void)
 {
     qmc5883p_cfg_t cfg;
     cfg.addr7 = kQmcAddr7;
-    cfg.mode = qmc5883p_regs::eQmcModeNormal;
-    cfg.odr = qmc5883p_regs::eQmcOdr200Hz;
-    cfg.osr1 = qmc5883p_regs::eQmcOsr1_8;
-    cfg.osr2 = qmc5883p_regs::eQmcOsr2_1;
     cfg.range = qmc5883p_regs::eQmcRange8Ga;
     cfg.set_reset = qmc5883p_regs::eQmcSetResetOn;
-    cfg.poll_timeout_ms = kQmcPollTimeoutMs;
+    applyQmcRate200(cfg);
     return cfg;
 }
 

@@ -6,6 +6,7 @@
 #include "app_mag.hpp"
 
 #include "app_sd_log.hpp"
+#include "app_wifi.hpp"
 #include "i2c_api.hpp"
 #include "mag_fft.hpp"
 #include "sensors/qmc5883p_api.hpp"
@@ -27,16 +28,16 @@ static constexpr UBaseType_t kSampleQueueLen = 32U;
 static constexpr UBaseType_t kFftQueueLen = 2U;
 static constexpr UBaseType_t kCmdQueueLen = 4U;
 
-struct odr_row_t {
-    float hz;
-    qmc5883p_regs::Odr odr;
+struct range_row_t {
+    float ga;
+    qmc5883p_regs::Range range;
 };
 
-static const odr_row_t kOdrTable[] = {
-    {10.0f, qmc5883p_regs::eQmcOdr10Hz},
-    {50.0f, qmc5883p_regs::eQmcOdr50Hz},
-    {100.0f, qmc5883p_regs::eQmcOdr100Hz},
-    {200.0f, qmc5883p_regs::eQmcOdr200Hz},
+static const range_row_t kRangeTable[] = {
+    {proto_cfg::kMagRange2Ga, qmc5883p_regs::eQmcRange2Ga},
+    {proto_cfg::kMagRange8Ga, qmc5883p_regs::eQmcRange8Ga},
+    {proto_cfg::kMagRange12Ga, qmc5883p_regs::eQmcRange12Ga},
+    {proto_cfg::kMagRange30Ga, qmc5883p_regs::eQmcRange30Ga},
 };
 
 static I2C s_bus(proto_cfg::makeMagI2cCfg());
@@ -56,43 +57,55 @@ static float s_win_y[proto_cfg::kMagFftN];
 static float s_win_z[proto_cfg::kMagFftN];
 static float s_win_abs[proto_cfg::kMagFftN];
 
-static float odrHz(qmc5883p_regs::Odr odr)
+static float outputHz(const qmc5883p_cfg_t& cfg)
 {
-    for (size_t i = 0U; i < (sizeof(kOdrTable) / sizeof(kOdrTable[0])); ++i) {
-        if (kOdrTable[i].odr == odr) {
-            return kOdrTable[i].hz;
-        }
+    if (cfg.mode == qmc5883p_regs::eQmcModeContinuous) {
+        return proto_cfg::kMagRate1500Hz;
     }
-    return 200.0f;
+    return proto_cfg::kMagRate200Hz;
 }
 
-static qmc5883p_regs::Odr nearestOdr(float hz)
+static bool snapRate(float hz, float& out)
 {
+    if (!(hz > 0.0f)) {
+        return false;
+    }
+    const float delta_low = fabsf(hz - proto_cfg::kMagRate200Hz);
+    const float delta_high = fabsf(hz - proto_cfg::kMagRate1500Hz);
+    if (delta_high < delta_low) {
+        out = proto_cfg::kMagRate1500Hz;
+        return true;
+    }
+    out = proto_cfg::kMagRate200Hz;
+    return true;
+}
+
+static void applyRate(qmc5883p_cfg_t& cfg, float hz)
+{
+    if (hz == proto_cfg::kMagRate1500Hz) {
+        proto_cfg::applyQmcRate1500(cfg);
+        return;
+    }
+    proto_cfg::applyQmcRate200(cfg);
+}
+
+static bool snapRange(float ga, qmc5883p_regs::Range& out)
+{
+    if (!(ga > 0.0f)) {
+        return false;
+    }
     size_t best = 0U;
-    float best_delta = fabsf(hz - kOdrTable[0].hz);
-    for (size_t i = 1U; i < (sizeof(kOdrTable) / sizeof(kOdrTable[0])); ++i) {
-        const float delta = fabsf(hz - kOdrTable[i].hz);
+    float best_delta = fabsf(ga - kRangeTable[0].ga);
+    const size_t count = sizeof(kRangeTable) / sizeof(kRangeTable[0]);
+    for (size_t i = 1U; i < count; ++i) {
+        const float delta = fabsf(ga - kRangeTable[i].ga);
         if (delta < best_delta) {
             best = i;
             best_delta = delta;
         }
     }
-    return kOdrTable[best].odr;
-}
-
-static uint32_t timeoutForHz(float hz)
-{
-    if (hz < 0.5f) {
-        hz = 0.5f;
-    }
-    float timeout = (1000.0f / hz) * 4.0f;
-    if (timeout < static_cast<float>(proto_cfg::kQmcPollTimeoutMs)) {
-        timeout = static_cast<float>(proto_cfg::kQmcPollTimeoutMs);
-    }
-    if (timeout > 4000.0f) {
-        timeout = 4000.0f;
-    }
-    return static_cast<uint32_t>(timeout);
+    out = kRangeTable[best].range;
+    return true;
 }
 
 static float gainGa(qmc5883p_regs::Range range)
@@ -135,7 +148,7 @@ static void fillRsp(app_cfg_rsp_t& rsp, bool ok)
     rsp.chip_id[0] = '8';
     rsp.chip_id[1] = '0';
     rsp.chip_id[2] = '\0';
-    rsp.odr_hz = odrHz(s_cfg.odr);
+    rsp.odr_hz = outputHz(s_cfg);
     rsp.gain_ga = gainGa(s_cfg.range);
     rsp.samples = osr1Count(s_cfg.osr1);
     rsp.fft_n = proto_cfg::kMagFftN;
@@ -143,6 +156,9 @@ static void fillRsp(app_cfg_rsp_t& rsp, bool ok)
 
 static void postSample(const mag_sample_msg_t& msg)
 {
+    if (!app_wifi_keep_raw(outputHz(s_cfg))) {
+        return;
+    }
     if (xQueueSend(s_sample_q, &msg, 0) == pdTRUE) {
         return;
     }
@@ -163,7 +179,7 @@ static void postFft(const mag_fft_msg_t& msg)
 
 static void emitFft(uint32_t t_ms)
 {
-    const float rate = odrHz(s_cfg.odr);
+    const float rate = outputHz(s_cfg);
     mag_fft_msg_t msg = {};
     msg.t_ms = t_ms;
     msg.rate_hz = rate;
@@ -228,14 +244,31 @@ static void applyCmd(const app_cmd_t& cmd, app_cfg_rsp_t& rsp)
         fillRsp(rsp, false);
         return;
     }
-    if (!cmd.has_rate) {
+    if (!cmd.has_rate && !cmd.has_range) {
         fillRsp(rsp, true);
         return;
     }
 
     qmc5883p_cfg_t next = s_cfg;
-    next.odr = nearestOdr(cmd.rate_hz);
-    next.poll_timeout_ms = timeoutForHz(odrHz(next.odr));
+    bool changed = false;
+    if (cmd.has_rate) {
+        float hz = 0.0f;
+        if (snapRate(cmd.rate_hz, hz)) {
+            applyRate(next, hz);
+            changed = true;
+        }
+    }
+    if (cmd.has_range) {
+        qmc5883p_regs::Range range = next.range;
+        if (snapRange(cmd.range_ga, range)) {
+            next.range = range;
+            changed = true;
+        }
+    }
+    if (!changed) {
+        fillRsp(rsp, true);
+        return;
+    }
     if (s_mag.reconfigure(next) != ESP_OK) {
         fillRsp(rsp, false);
         return;
@@ -285,6 +318,7 @@ static void readOnce(void)
     esp_task_wdt_reset();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "readGauss failed: %s", esp_err_to_name(err));
+        vTaskDelay(pdMS_TO_TICKS(10));
         return;
     }
 
@@ -293,7 +327,7 @@ static void readOnce(void)
     const float y_ut = gauss.y * proto_cfg::kGaussToUt;
     const float z_ut = gauss.z * proto_cfg::kGaussToUt;
 
-    if (app_sd_write_mag(t_ms, x_ut, y_ut, z_ut) != ESP_OK) {
+    if (app_sd_write_mag(t_ms, x_ut, y_ut, z_ut, outputHz(s_cfg)) != ESP_OK) {
         ESP_LOGW(TAG, "mag.csv write failed");
     }
 

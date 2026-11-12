@@ -21,6 +21,7 @@ struct cbor_buf_t {
 /**
  * @brief Decode one control map (config, start, or stop).
  * @return ESP_OK when the map has a known cmd string.
+ * @note Config reads rate_hz and range_ga. Unknown keys are skipped.
  */
 esp_err_t app_cbor_decode_cmd(const uint8_t* data, size_t len, app_cmd_t& out);
 

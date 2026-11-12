@@ -17,12 +17,70 @@
 static const char* TAG = "APP_SD";
 static constexpr size_t kDirLen = 32U;
 static constexpr size_t kPathLen = 48U;
+static constexpr size_t kMagCsvLineCap = 64U;
+static constexpr size_t kMagCsvBurstLines = 16U;
+static constexpr size_t kMagCsvBurstBytes = kMagCsvLineCap * kMagCsvBurstLines;
 
 static SdCard s_card(proto_cfg::makeSdCfg());
 static FILE* s_mag = nullptr;
 static FILE* s_fft = nullptr;
 static char s_dir[kDirLen] = {};
 static uint32_t s_samples = 0U;
+// Internal DRAM (BSS). Do not allocate this buffer on the heap or in PSRAM.
+static char s_mag_burst[kMagCsvBurstBytes];
+static size_t s_mag_burst_used = 0U;
+static uint8_t s_mag_burst_lines = 0U;
+
+static esp_err_t flushMagBurst(void)
+{
+    if (s_mag_burst_used == 0U) {
+        return ESP_OK;
+    }
+    if (s_mag == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    const size_t wrote = fwrite(s_mag_burst, 1U, s_mag_burst_used, s_mag);
+    if (wrote != s_mag_burst_used) {
+        return ESP_FAIL;
+    }
+    if (fflush(s_mag) != 0) {
+        return ESP_FAIL;
+    }
+    s_mag_burst_used = 0U;
+    s_mag_burst_lines = 0U;
+    return ESP_OK;
+}
+
+static esp_err_t writeMagBurst(uint32_t t_ms, float x_ut, float y_ut, float z_ut)
+{
+    const bool full = s_mag_burst_lines >= kMagCsvBurstLines;
+    const bool tight = (kMagCsvBurstBytes - s_mag_burst_used) < kMagCsvLineCap;
+    if (full || tight) {
+        const esp_err_t err = flushMagBurst();
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    const size_t room = kMagCsvBurstBytes - s_mag_burst_used;
+    const int wrote = snprintf(
+        s_mag_burst + s_mag_burst_used,
+        room,
+        "%lu,%.4f,%.4f,%.4f\n",
+        static_cast<unsigned long>(t_ms),
+        static_cast<double>(x_ut),
+        static_cast<double>(y_ut),
+        static_cast<double>(z_ut));
+    if (wrote < 0 || static_cast<size_t>(wrote) >= room) {
+        return ESP_FAIL;
+    }
+    s_mag_burst_used += static_cast<size_t>(wrote);
+    s_mag_burst_lines++;
+    if (s_mag_burst_lines >= kMagCsvBurstLines) {
+        return flushMagBurst();
+    }
+    return ESP_OK;
+}
 
 static esp_err_t readSeq(uint32_t& seq)
 {
@@ -95,15 +153,31 @@ esp_err_t app_sd_start_session(void)
         return ESP_FAIL;
     }
     fprintf(s_fft, "t_ms,bin,freq_hz,mx,my,mz,mabs\n");
+    s_mag_burst_used = 0U;
+    s_mag_burst_lines = 0U;
     s_samples = 0U;
     ESP_LOGI(TAG, "session %s open", s_dir);
     return ESP_OK;
 }
 
-esp_err_t app_sd_write_mag(uint32_t t_ms, float x_ut, float y_ut, float z_ut)
+esp_err_t app_sd_write_mag(uint32_t t_ms, float x_ut, float y_ut, float z_ut, float rate_hz)
 {
     if (s_mag == nullptr) {
         return ESP_ERR_INVALID_STATE;
+    }
+    if (rate_hz > proto_cfg::kMagRate200Hz) {
+        const esp_err_t err = writeMagBurst(t_ms, x_ut, y_ut, z_ut);
+        if (err != ESP_OK) {
+            return err;
+        }
+        s_samples++;
+        return ESP_OK;
+    }
+    if (s_mag_burst_used > 0U) {
+        const esp_err_t err = flushMagBurst();
+        if (err != ESP_OK) {
+            return err;
+        }
     }
     const int wrote = fprintf(s_mag, "%lu,%.4f,%.4f,%.4f\n",
                               static_cast<unsigned long>(t_ms),
@@ -114,7 +188,7 @@ esp_err_t app_sd_write_mag(uint32_t t_ms, float x_ut, float y_ut, float z_ut)
         return ESP_FAIL;
     }
     s_samples++;
-    if ((s_samples % 16U) == 0U) {
+    if ((s_samples % kMagCsvBurstLines) == 0U) {
         fflush(s_mag);
     }
     return ESP_OK;
@@ -154,10 +228,13 @@ esp_err_t app_sd_write_fft(uint32_t t_ms,
 void app_sd_stop_session(void)
 {
     if (s_mag != nullptr) {
+        (void)flushMagBurst();
         fflush(s_mag);
         fclose(s_mag);
         s_mag = nullptr;
     }
+    s_mag_burst_used = 0U;
+    s_mag_burst_lines = 0U;
     if (s_fft != nullptr) {
         fflush(s_fft);
         fclose(s_fft);

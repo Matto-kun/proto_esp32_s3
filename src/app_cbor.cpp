@@ -345,6 +345,13 @@ esp_err_t app_cbor_decode_cmd(const uint8_t* data, size_t len, app_cmd_t& out)
             out.rate_hz = static_cast<float>(rate);
             continue;
         }
+        if (strcmp(key, "range_ga") == 0) {
+            double range = 0.0;
+            ESP_RETURN_ON_ERROR(readNumber(rd, range), TAG, "range");
+            out.has_range = true;
+            out.range_ga = static_cast<float>(range);
+            continue;
+        }
         if (strcmp(key, "sensors") == 0) {
             ESP_RETURN_ON_ERROR(readSensorList(rd, out), TAG, "sensors");
             continue;

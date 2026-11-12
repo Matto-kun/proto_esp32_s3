@@ -26,6 +26,48 @@
 static const char* TAG = "APP_WIFI";
 static constexpr size_t kMaxCmd = 256U;
 static constexpr size_t kTxCap = 3072U;
+static constexpr uint32_t kWifiRawKeepHz = 50U;
+static constexpr uint16_t kWifiRawDivMax = 1000U;
+
+static uint16_t s_raw_div = 1U;
+static uint16_t s_raw_count = 0U;
+
+static uint16_t rawKeepDiv(float odr_hz)
+{
+    if (!(odr_hz > proto_cfg::kMagRate200Hz)) {
+        return 1U;
+    }
+    const uint32_t hz_u = static_cast<uint32_t>(odr_hz);
+    uint32_t div = hz_u / kWifiRawKeepHz;
+    if ((hz_u % kWifiRawKeepHz) >= (kWifiRawKeepHz / 2U)) {
+        div++;
+    }
+    if (div < 1U) {
+        div = 1U;
+    }
+    if (div > kWifiRawDivMax) {
+        div = kWifiRawDivMax;
+    }
+    return static_cast<uint16_t>(div);
+}
+
+bool app_wifi_keep_raw(float odr_hz)
+{
+    const uint16_t div = rawKeepDiv(odr_hz);
+    if (div != s_raw_div) {
+        s_raw_div = div;
+        s_raw_count = 0U;
+    }
+    if (div <= 1U) {
+        return true;
+    }
+    s_raw_count++;
+    if (s_raw_count < div) {
+        return false;
+    }
+    s_raw_count = 0U;
+    return true;
+}
 
 static uint8_t s_rx[kMaxCmd];
 static uint8_t s_tx_mem[kTxCap];
@@ -65,18 +107,19 @@ static esp_err_t sendFrame(int fd, const cbor_buf_t& buf)
 static esp_err_t drainQueues(int fd)
 {
     cbor_buf_t buf = {s_tx_mem, kTxCap, 0U};
-    mag_sample_msg_t sample = {};
-    while (app_mag_pop_sample(sample) == ESP_OK) {
-        if (app_cbor_encode_mag(buf, sample) != ESP_OK) {
+    // Send every FFT frame. Raw frames are already limited before the queue.
+    mag_fft_msg_t fft = {};
+    while (app_mag_pop_fft(fft) == ESP_OK) {
+        if (app_cbor_encode_fft(buf, fft) != ESP_OK) {
             return ESP_FAIL;
         }
         if (sendFrame(fd, buf) != ESP_OK) {
             return ESP_FAIL;
         }
     }
-    mag_fft_msg_t fft = {};
-    while (app_mag_pop_fft(fft) == ESP_OK) {
-        if (app_cbor_encode_fft(buf, fft) != ESP_OK) {
+    mag_sample_msg_t sample = {};
+    while (app_mag_pop_sample(sample) == ESP_OK) {
+        if (app_cbor_encode_mag(buf, sample) != ESP_OK) {
             return ESP_FAIL;
         }
         if (sendFrame(fd, buf) != ESP_OK) {
@@ -252,6 +295,10 @@ static esp_err_t startRadio(void)
         return ESP_FAIL;
     }
 
+    ESP_LOGI(TAG, "Wi-Fi waits %lu ms",
+             static_cast<unsigned long>(proto_cfg::kWifiStartDelayMs));
+    vTaskDelay(pdMS_TO_TICKS(proto_cfg::kWifiStartDelayMs));
+
     wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&wifi_cfg), TAG, "wifi init");
     ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_RAM), TAG, "wifi storage");
@@ -272,7 +319,10 @@ static esp_err_t startRadio(void)
     ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap), TAG, "wifi config");
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi start");
-    ESP_LOGI(TAG, "SoftAP %s up", proto_cfg::kWifiApSsid);
+    const int8_t power_code = static_cast<int8_t>(proto_cfg::kWifiTxPower);
+    ESP_RETURN_ON_ERROR(esp_wifi_set_max_tx_power(power_code), TAG, "tx power");
+    ESP_LOGI(TAG, "SoftAP %s up, TX power code %d",
+             proto_cfg::kWifiApSsid, static_cast<int>(power_code));
     return ESP_OK;
 }
 

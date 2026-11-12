@@ -19,12 +19,21 @@ enum class eAppCmd : uint8_t {
     eCmdStop,
 };
 
+/**
+ * @brief Command from the TCP client.
+ * @note rate_hz snaps to 200 or 1500. range_ga snaps to 2, 8, 12, or 30.
+ *       The default rate is 200 Hz. The default full-scale range is 8 G.
+ */
 struct app_cmd_t {
     eAppCmd kind = eAppCmd::eCmdNone;
     bool list_present = false;
     bool has_mag = false;
     bool has_rate = false;
     float rate_hz = 0.0f;
+    /** True when the map has the range_ga key. */
+    bool has_range = false;
+    /** Requested full-scale range in gauss. */
+    float range_ga = 0.0f;
 };
 
 struct app_cfg_rsp_t {
