@@ -6,7 +6,7 @@ Breadboard prototype firmware (screen, buttons, IMU-ready) for ESP32-S3.
 
 | Package | How | Role |
 |---------|-----|------|
-| `ESP32-S3_Libraries` | `lib_deps` → `../ESP32-S3_Libraries` | `gpio_api`, `spi_api` |
+| `ESP32-S3_Libraries` | `lib_deps` → GitHub `feat-imu-gnss-appble` | `gpio_api`, `spi_api` |
 | `esp32_s3_display` | `lib_deps` → `../ESP32-S3_Libraries/display` | `display_api` + layout |
 | `st7789` | `lib/st7789` (vendored LibDriver) | Third-party ST7789 driver |
 

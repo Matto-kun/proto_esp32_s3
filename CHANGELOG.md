@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The logger takes `ESP32-S3_Libraries` from GitHub branch `feat-imu-gnss-appble`.
 - The QMC5883P stays in suspend after boot. `start` writes the selected measure mode. `stop` writes suspend.
 - A missing microSD card does not stop the sensor or the SoftAP. Later card calls do nothing.
 - The SoftAP stays off for 3 seconds after boot. The default transmit power is 8 dBm.
