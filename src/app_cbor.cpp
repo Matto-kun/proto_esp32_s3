@@ -231,6 +231,21 @@ static esp_err_t readTextAt(cbor_rd_t& rd, char* dst, size_t cap)
     return ESP_OK;
 }
 
+static esp_err_t readBool(cbor_rd_t& rd, bool& out)
+{
+    uint8_t type = 0U;
+    ESP_RETURN_ON_ERROR(pull(rd, type), TAG, "bool");
+    if (type == 0xF5U) {
+        out = true;
+        return ESP_OK;
+    }
+    if (type == 0xF4U) {
+        out = false;
+        return ESP_OK;
+    }
+    return ESP_ERR_INVALID_ARG;
+}
+
 static esp_err_t readNumber(cbor_rd_t& rd, double& out)
 {
     uint8_t type = 0U;
@@ -307,6 +322,9 @@ static eAppCmd cmdFromText(const char* text)
     if (strcmp(text, "stop") == 0) {
         return eAppCmd::eCmdStop;
     }
+    if (strcmp(text, "save") == 0) {
+        return eAppCmd::eCmdSave;
+    }
     return eAppCmd::eCmdNone;
 }
 
@@ -352,6 +370,13 @@ esp_err_t app_cbor_decode_cmd(const uint8_t* data, size_t len, app_cmd_t& out)
             out.range_ga = static_cast<float>(range);
             continue;
         }
+        if (strcmp(key, "full_rate") == 0) {
+            bool full_rate = false;
+            ESP_RETURN_ON_ERROR(readBool(rd, full_rate), TAG, "full_rate");
+            out.has_full_rate = true;
+            out.full_rate = full_rate;
+            continue;
+        }
         if (strcmp(key, "sensors") == 0) {
             ESP_RETURN_ON_ERROR(readSensorList(rd, out), TAG, "sensors");
             continue;
@@ -393,7 +418,7 @@ esp_err_t app_cbor_encode_cfg(cbor_buf_t& buf, const app_cfg_rsp_t& rsp)
 esp_err_t app_cbor_encode_mag(cbor_buf_t& buf, const mag_sample_msg_t& sample)
 {
     buf.len = 0U;
-    ESP_RETURN_ON_ERROR(putType(buf, 5U, 6U), TAG, "mag map");
+    ESP_RETURN_ON_ERROR(putType(buf, 5U, 7U), TAG, "mag map");
     ESP_RETURN_ON_ERROR(putKey(buf, "t_ms"), TAG, "t");
     ESP_RETURN_ON_ERROR(putU32(buf, sample.t_ms), TAG, "t");
     ESP_RETURN_ON_ERROR(putKey(buf, "sensor"), TAG, "sensor");
@@ -405,7 +430,9 @@ esp_err_t app_cbor_encode_mag(cbor_buf_t& buf, const mag_sample_msg_t& sample)
     ESP_RETURN_ON_ERROR(putKey(buf, "y"), TAG, "y");
     ESP_RETURN_ON_ERROR(putF64(buf, sample.y_ut), TAG, "y");
     ESP_RETURN_ON_ERROR(putKey(buf, "z"), TAG, "z");
-    return putF64(buf, sample.z_ut);
+    ESP_RETURN_ON_ERROR(putF64(buf, sample.z_ut), TAG, "z");
+    ESP_RETURN_ON_ERROR(putKey(buf, "rate_hz"), TAG, "rate");
+    return putF64(buf, sample.rate_hz);
 }
 
 esp_err_t app_cbor_encode_fft(cbor_buf_t& buf, const mag_fft_msg_t& fft)

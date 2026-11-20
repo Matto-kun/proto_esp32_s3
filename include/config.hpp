@@ -263,6 +263,9 @@ static constexpr int8_t  kPinSdMiso = 37;
 static constexpr int8_t  kPinSdSck  = 36;
 static constexpr int8_t  kPinSdCs   = 38;
 
+/** Flush both open CSV files on this period. The session stays open. */
+static constexpr uint32_t kSdAutoSyncMs = 60000U;
+
 /**
  * Transmit power codes for esp_wifi_set_max_tx_power().
  * The unit is 0.25 dBm. The name is the power the chip keeps.

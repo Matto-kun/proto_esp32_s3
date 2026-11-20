@@ -40,9 +40,17 @@ static const range_row_t kRangeTable[] = {
     {proto_cfg::kMagRange30Ga, qmc5883p_regs::eQmcRange30Ga},
 };
 
-static I2C s_bus(proto_cfg::makeMagI2cCfg());
-static Qmc5883p s_mag(s_bus, proto_cfg::makeQmc5883pCfg());
 static qmc5883p_cfg_t s_cfg = proto_cfg::makeQmc5883pCfg();
+static I2C s_bus(proto_cfg::makeMagI2cCfg());
+
+static qmc5883p_cfg_t suspendCfg(const qmc5883p_cfg_t& measure)
+{
+    qmc5883p_cfg_t idle = measure;
+    idle.mode = qmc5883p_regs::eQmcModeSuspend;
+    return idle;
+}
+
+static Qmc5883p s_mag(s_bus, suspendCfg(s_cfg));
 
 static QueueHandle_t s_sample_q = nullptr;
 static QueueHandle_t s_fft_q = nullptr;
@@ -50,6 +58,9 @@ static QueueHandle_t s_req_q = nullptr;
 static QueueHandle_t s_rsp_q = nullptr;
 
 static bool s_running = false;
+static int64_t s_last_sync_us = 0;
+static bool s_sync_warned = false;
+static bool s_full_rate = false;
 static bool s_sensor_ok = false;
 static uint16_t s_filled = 0U;
 static float s_win_x[proto_cfg::kMagFftN];
@@ -156,7 +167,7 @@ static void fillRsp(app_cfg_rsp_t& rsp, bool ok)
 
 static void postSample(const mag_sample_msg_t& msg)
 {
-    if (!app_wifi_keep_raw(outputHz(s_cfg))) {
+    if (!app_wifi_keep_raw(msg.rate_hz, s_full_rate)) {
         return;
     }
     if (xQueueSend(s_sample_q, &msg, 0) == pdTRUE) {
@@ -208,9 +219,39 @@ static void emitFft(uint32_t t_ms)
     postFft(msg);
 }
 
+static void storeFullRate(const app_cmd_t& cmd)
+{
+    if (!cmd.has_full_rate) {
+        return;
+    }
+    s_full_rate = cmd.full_rate;
+}
+
+static esp_err_t enterMeasure(void)
+{
+    return s_mag.reconfigure(s_cfg);
+}
+
+static esp_err_t enterSuspend(void)
+{
+    return s_mag.reconfigure(suspendCfg(s_cfg));
+}
+
+static bool syncIfRunning(app_cfg_rsp_t& rsp)
+{
+    if (!s_running) {
+        return true;
+    }
+    if (app_sd_sync() == ESP_OK) {
+        return true;
+    }
+    fillRsp(rsp, false);
+    return false;
+}
+
 static void applyCmd(const app_cmd_t& cmd, app_cfg_rsp_t& rsp)
 {
-    if (!s_sensor_ok && cmd.kind != eAppCmd::eCmdStop) {
+    if (!s_sensor_ok && cmd.kind != eAppCmd::eCmdStop && cmd.kind != eAppCmd::eCmdSave) {
         fillRsp(rsp, false);
         return;
     }
@@ -223,16 +264,31 @@ static void applyCmd(const app_cmd_t& cmd, app_cfg_rsp_t& rsp)
             fillRsp(rsp, false);
             return;
         }
+        if (enterMeasure() != ESP_OK) {
+            app_sd_stop_session();
+            fillRsp(rsp, false);
+            return;
+        }
         s_filled = 0U;
         s_running = true;
+        s_last_sync_us = esp_timer_get_time();
+        s_sync_warned = false;
         fillRsp(rsp, true);
         return;
     }
 
     if (cmd.kind == eAppCmd::eCmdStop) {
         s_running = false;
+        s_filled = 0U;
+        const esp_err_t mode_err = enterSuspend();
         app_sd_stop_session();
-        fillRsp(rsp, true);
+        fillRsp(rsp, mode_err == ESP_OK);
+        return;
+    }
+
+    if (cmd.kind == eAppCmd::eCmdSave) {
+        // Flush the open CSV files. The sensor mode does not change.
+        fillRsp(rsp, app_sd_sync() == ESP_OK);
         return;
     }
 
@@ -245,6 +301,10 @@ static void applyCmd(const app_cmd_t& cmd, app_cfg_rsp_t& rsp)
         return;
     }
     if (!cmd.has_rate && !cmd.has_range) {
+        storeFullRate(cmd);
+        if (cmd.has_full_rate && !syncIfRunning(rsp)) {
+            return;
+        }
         fillRsp(rsp, true);
         return;
     }
@@ -266,15 +326,27 @@ static void applyCmd(const app_cmd_t& cmd, app_cfg_rsp_t& rsp)
         }
     }
     if (!changed) {
+        storeFullRate(cmd);
+        if (cmd.has_full_rate && !syncIfRunning(rsp)) {
+            return;
+        }
         fillRsp(rsp, true);
         return;
     }
-    if (s_mag.reconfigure(next) != ESP_OK) {
+    qmc5883p_cfg_t written = next;
+    if (!s_running) {
+        written.mode = qmc5883p_regs::eQmcModeSuspend;
+    }
+    if (s_mag.reconfigure(written) != ESP_OK) {
         fillRsp(rsp, false);
         return;
     }
     s_cfg = next;
     s_filled = 0U;
+    storeFullRate(cmd);
+    if (!syncIfRunning(rsp)) {
+        return;
+    }
     fillRsp(rsp, true);
 }
 
@@ -323,11 +395,12 @@ static void readOnce(void)
     }
 
     const uint32_t t_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000LL);
+    const float rate_hz = outputHz(s_cfg);
     const float x_ut = gauss.x * proto_cfg::kGaussToUt;
     const float y_ut = gauss.y * proto_cfg::kGaussToUt;
     const float z_ut = gauss.z * proto_cfg::kGaussToUt;
 
-    if (app_sd_write_mag(t_ms, x_ut, y_ut, z_ut, outputHz(s_cfg)) != ESP_OK) {
+    if (app_sd_write_mag(t_ms, x_ut, y_ut, z_ut, rate_hz) != ESP_OK) {
         ESP_LOGW(TAG, "mag.csv write failed");
     }
 
@@ -336,8 +409,33 @@ static void readOnce(void)
     msg.x_ut = x_ut;
     msg.y_ut = y_ut;
     msg.z_ut = z_ut;
+    msg.rate_hz = rate_hz;
     postSample(msg);
     pushWindow(t_ms, x_ut, y_ut, z_ut);
+}
+
+// One flush can pause samples for the card time.
+static void autoSyncIfDue(void)
+{
+    const int64_t now_us = esp_timer_get_time();
+    const int64_t period_us =
+        static_cast<int64_t>(proto_cfg::kSdAutoSyncMs) * 1000LL;
+    if ((now_us - s_last_sync_us) < period_us) {
+        return;
+    }
+    s_last_sync_us = now_us;
+    esp_task_wdt_reset();
+    const esp_err_t err = app_sd_sync();
+    esp_task_wdt_reset();
+    if (err == ESP_OK) {
+        s_sync_warned = false;
+        return;
+    }
+    if (s_sync_warned) {
+        return;
+    }
+    s_sync_warned = true;
+    ESP_LOGW(TAG, "auto sync failed: %s", esp_err_to_name(err));
 }
 
 static void sampleTask(void* arg)
@@ -362,6 +460,9 @@ static void sampleTask(void* arg)
             continue;
         }
         readOnce();
+        if (s_running) {
+            autoSyncIfDue();
+        }
     }
 }
 

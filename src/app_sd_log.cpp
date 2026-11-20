@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "esp_log.h"
 
@@ -22,6 +23,7 @@ static constexpr size_t kMagCsvBurstLines = 16U;
 static constexpr size_t kMagCsvBurstBytes = kMagCsvLineCap * kMagCsvBurstLines;
 
 static SdCard s_card(proto_cfg::makeSdCfg());
+static bool s_card_present = false;
 static FILE* s_mag = nullptr;
 static FILE* s_fft = nullptr;
 static char s_dir[kDirLen] = {};
@@ -31,7 +33,8 @@ static char s_mag_burst[kMagCsvBurstBytes];
 static size_t s_mag_burst_used = 0U;
 static uint8_t s_mag_burst_lines = 0U;
 
-static esp_err_t flushMagBurst(void)
+// Write the RAM block to the FILE buffer. app_sd_sync flushes that buffer.
+static esp_err_t writeMagBurstFile(void)
 {
     if (s_mag_burst_used == 0U) {
         return ESP_OK;
@@ -41,9 +44,7 @@ static esp_err_t flushMagBurst(void)
     }
     const size_t wrote = fwrite(s_mag_burst, 1U, s_mag_burst_used, s_mag);
     if (wrote != s_mag_burst_used) {
-        return ESP_FAIL;
-    }
-    if (fflush(s_mag) != 0) {
+        ESP_LOGW(TAG, "mag burst write failed");
         return ESP_FAIL;
     }
     s_mag_burst_used = 0U;
@@ -51,12 +52,27 @@ static esp_err_t flushMagBurst(void)
     return ESP_OK;
 }
 
-static esp_err_t writeMagBurst(uint32_t t_ms, float x_ut, float y_ut, float z_ut)
+static esp_err_t fsyncFile(FILE* file)
+{
+    if (file == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    const int fd = fileno(file);
+    if (fd < 0) {
+        return ESP_FAIL;
+    }
+    if (fsync(fd) != 0) {
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t writeMagBurst(uint32_t t_ms, float x_ut, float y_ut, float z_ut, float rate_hz)
 {
     const bool full = s_mag_burst_lines >= kMagCsvBurstLines;
     const bool tight = (kMagCsvBurstBytes - s_mag_burst_used) < kMagCsvLineCap;
     if (full || tight) {
-        const esp_err_t err = flushMagBurst();
+        const esp_err_t err = writeMagBurstFile();
         if (err != ESP_OK) {
             return err;
         }
@@ -66,18 +82,19 @@ static esp_err_t writeMagBurst(uint32_t t_ms, float x_ut, float y_ut, float z_ut
     const int wrote = snprintf(
         s_mag_burst + s_mag_burst_used,
         room,
-        "%lu,%.4f,%.4f,%.4f\n",
+        "%lu,%.4f,%.4f,%.4f,%.4f\n",
         static_cast<unsigned long>(t_ms),
         static_cast<double>(x_ut),
         static_cast<double>(y_ut),
-        static_cast<double>(z_ut));
+        static_cast<double>(z_ut),
+        static_cast<double>(rate_hz));
     if (wrote < 0 || static_cast<size_t>(wrote) >= room) {
         return ESP_FAIL;
     }
     s_mag_burst_used += static_cast<size_t>(wrote);
     s_mag_burst_lines++;
     if (s_mag_burst_lines >= kMagCsvBurstLines) {
-        return flushMagBurst();
+        return writeMagBurstFile();
     }
     return ESP_OK;
 }
@@ -116,13 +133,19 @@ esp_err_t app_sd_init(void)
 {
     const esp_err_t err = s_card.init();
     if (err != ESP_OK) {
+        s_card_present = false;
+        ESP_LOGW(TAG, "microSD not found: %s", esp_err_to_name(err));
         return err;
     }
+    s_card_present = true;
     return ESP_OK;
 }
 
 esp_err_t app_sd_start_session(void)
 {
+    if (!s_card_present) {
+        return ESP_OK;
+    }
     if (s_mag != nullptr) {
         return ESP_OK;
     }
@@ -142,7 +165,7 @@ esp_err_t app_sd_start_session(void)
         ESP_LOGE(TAG, "open %s failed", path);
         return ESP_FAIL;
     }
-    fprintf(s_mag, "t_ms,x_uT,y_uT,z_uT\n");
+    fprintf(s_mag, "t_ms,x_uT,y_uT,z_uT,rate_hz\n");
 
     snprintf(path, sizeof(path), "%s/fft.csv", s_dir);
     s_fft = fopen(path, "w");
@@ -162,11 +185,14 @@ esp_err_t app_sd_start_session(void)
 
 esp_err_t app_sd_write_mag(uint32_t t_ms, float x_ut, float y_ut, float z_ut, float rate_hz)
 {
+    if (!s_card_present) {
+        return ESP_OK;
+    }
     if (s_mag == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
     if (rate_hz > proto_cfg::kMagRate200Hz) {
-        const esp_err_t err = writeMagBurst(t_ms, x_ut, y_ut, z_ut);
+        const esp_err_t err = writeMagBurst(t_ms, x_ut, y_ut, z_ut, rate_hz);
         if (err != ESP_OK) {
             return err;
         }
@@ -174,16 +200,17 @@ esp_err_t app_sd_write_mag(uint32_t t_ms, float x_ut, float y_ut, float z_ut, fl
         return ESP_OK;
     }
     if (s_mag_burst_used > 0U) {
-        const esp_err_t err = flushMagBurst();
+        const esp_err_t err = writeMagBurstFile();
         if (err != ESP_OK) {
             return err;
         }
     }
-    const int wrote = fprintf(s_mag, "%lu,%.4f,%.4f,%.4f\n",
+    const int wrote = fprintf(s_mag, "%lu,%.4f,%.4f,%.4f,%.4f\n",
                               static_cast<unsigned long>(t_ms),
                               static_cast<double>(x_ut),
                               static_cast<double>(y_ut),
-                              static_cast<double>(z_ut));
+                              static_cast<double>(z_ut),
+                              static_cast<double>(rate_hz));
     if (wrote < 0) {
         return ESP_FAIL;
     }
@@ -202,6 +229,9 @@ esp_err_t app_sd_write_fft(uint32_t t_ms,
                            const float* mabs,
                            uint16_t bins)
 {
+    if (!s_card_present) {
+        return ESP_OK;
+    }
     if (s_fft == nullptr || mx == nullptr || my == nullptr ||
         mz == nullptr || mabs == nullptr) {
         return ESP_ERR_INVALID_STATE;
@@ -225,18 +255,54 @@ esp_err_t app_sd_write_fft(uint32_t t_ms,
     return ESP_OK;
 }
 
+esp_err_t app_sd_sync(void)
+{
+    if (!s_card_present) {
+        return ESP_OK;
+    }
+    if (s_mag == nullptr || s_fft == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    const esp_err_t burst_err = writeMagBurstFile();
+    if (burst_err != ESP_OK) {
+        return burst_err;
+    }
+    if (fflush(s_mag) != 0) {
+        ESP_LOGW(TAG, "mag fflush failed");
+        return ESP_FAIL;
+    }
+    if (fflush(s_fft) != 0) {
+        ESP_LOGW(TAG, "fft fflush failed");
+        return ESP_FAIL;
+    }
+    if (fsyncFile(s_mag) != ESP_OK) {
+        ESP_LOGW(TAG, "mag fsync failed");
+        return ESP_FAIL;
+    }
+    if (fsyncFile(s_fft) != ESP_OK) {
+        ESP_LOGW(TAG, "fft fsync failed");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
 void app_sd_stop_session(void)
 {
+    if (!s_card_present) {
+        return;
+    }
+    if (s_mag != nullptr || s_fft != nullptr) {
+        if (app_sd_sync() != ESP_OK) {
+            ESP_LOGW(TAG, "sync before close failed");
+        }
+    }
     if (s_mag != nullptr) {
-        (void)flushMagBurst();
-        fflush(s_mag);
         fclose(s_mag);
         s_mag = nullptr;
     }
     s_mag_burst_used = 0U;
     s_mag_burst_lines = 0U;
     if (s_fft != nullptr) {
-        fflush(s_fft);
         fclose(s_fft);
         s_fft = nullptr;
     }

@@ -17,11 +17,13 @@ enum class eAppCmd : uint8_t {
     eCmdConfig,
     eCmdStart,
     eCmdStop,
+    eCmdSave,
 };
 
 /**
  * @brief Command from the TCP client.
  * @note rate_hz snaps to 200 or 1500. range_ga snaps to 2, 8, 12, or 30.
+ *       full_rate is false until a config map sets it.
  *       The default rate is 200 Hz. The default full-scale range is 8 G.
  */
 struct app_cmd_t {
@@ -34,6 +36,10 @@ struct app_cmd_t {
     bool has_range = false;
     /** Requested full-scale range in gauss. */
     float range_ga = 0.0f;
+    /** True when the map has the full_rate key. */
+    bool has_full_rate = false;
+    /** True when the TCP task keeps every raw sample. */
+    bool full_rate = false;
 };
 
 struct app_cfg_rsp_t {
@@ -51,6 +57,8 @@ struct mag_sample_msg_t {
     float x_ut = 0.0f;
     float y_ut = 0.0f;
     float z_ut = 0.0f;
+    /** Output rate in hertz at the sample time. */
+    float rate_hz = 0.0f;
 };
 
 struct mag_fft_msg_t {
@@ -67,6 +75,8 @@ struct mag_fft_msg_t {
 /**
  * @brief Start I2C, the QMC5883P, the FFT tables, and the sample task.
  * @return ESP_OK when the chip id is 0x80.
+ * @note The chip stays in suspend. The start command writes the selected measure mode.
+ *       The stop command writes suspend again.
  */
 esp_err_t app_mag_init(void);
 

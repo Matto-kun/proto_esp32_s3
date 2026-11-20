@@ -51,9 +51,9 @@ static uint16_t rawKeepDiv(float odr_hz)
     return static_cast<uint16_t>(div);
 }
 
-bool app_wifi_keep_raw(float odr_hz)
+bool app_wifi_keep_raw(float odr_hz, bool full_rate)
 {
-    const uint16_t div = rawKeepDiv(odr_hz);
+    const uint16_t div = full_rate ? 1U : rawKeepDiv(odr_hz);
     if (div != s_raw_div) {
         s_raw_div = div;
         s_raw_count = 0U;
@@ -161,7 +161,7 @@ static void handlePayload(int fd, const uint8_t* data, size_t len)
         ESP_LOGW(TAG, "command timeout");
         return;
     }
-    if (cmd.kind != eAppCmd::eCmdConfig) {
+    if (cmd.kind != eAppCmd::eCmdConfig && cmd.kind != eAppCmd::eCmdSave) {
         return;
     }
     cbor_buf_t buf = {s_tx_mem, kTxCap, 0U};

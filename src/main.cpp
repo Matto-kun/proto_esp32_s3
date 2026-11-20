@@ -28,10 +28,10 @@ extern "C" void app_main(void)
              static_cast<int>(proto_cfg::kPinMagDrdy));
 
     if (app_sd_init() != ESP_OK) {
-        ESP_LOGE(TAG, "microSD mount FAILED");
-        park();
+        ESP_LOGW(TAG, "microSD absent. Sensor and Wi-Fi continue.");
+    } else {
+        ESP_LOGI(TAG, "microSD mounted at /sdcard");
     }
-    ESP_LOGI(TAG, "microSD mounted at /sdcard");
 
     if (app_mag_init() != ESP_OK) {
         ESP_LOGE(TAG, "QMC5883P init FAILED");

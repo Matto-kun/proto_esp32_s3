@@ -1,0 +1,7 @@
+# Same policy as sdkconfig.defaults. Kept so the logger settings have one name.
+CONFIG_DSP_MAX_FFT_SIZE_2048=y
+
+# CONFIG_BT_ENABLED is not set
+
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y

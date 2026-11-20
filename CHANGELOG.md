@@ -13,12 +13,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The config reply still reports `odr_hz` and `gain_ga`.
 - Card lines sit in an internal DRAM buffer so the SDSPI DMA channel can move them.
 - `tool/wifi_smoke.py` checks `range_ga` and both sample rates.
+- The `save` command flushes both open CSV files to the card. The session remains open.
+- The sample task flushes both files every 1 minute while a session is open.
+- The `config` command accepts the boolean `full_rate`.
+- When `full_rate` is true, the TCP task sends every raw sample.
+- The mag sample map and each `mag.csv` row include `rate_hz`.
 
 ### Changed
 
+- The QMC5883P stays in suspend after boot. `start` writes the selected measure mode. `stop` writes suspend.
+- A missing microSD card does not stop the sensor or the SoftAP. Later card calls do nothing.
 - The SoftAP stays off for 3 seconds after boot. The default transmit power is 8 dBm.
 - Above 200 Hz the TCP task sends about 50 raw frames each second.
 - The TCP task still sends every FFT frame.
+- `stop` flushes both files to the card before it closes them.
+- A successful `config` change during a session flushes the previous block.
+- At 1500 Hz the writer does not flush each 16-line block. `save` and `stop` flush that block.
 
 ## [2026-11-10]
 

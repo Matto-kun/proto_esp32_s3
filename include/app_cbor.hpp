@@ -19,16 +19,19 @@ struct cbor_buf_t {
 };
 
 /**
- * @brief Decode one control map (config, start, or stop).
+ * @brief Decode one control map (config, start, stop, or save).
  * @return ESP_OK when the map has a known cmd string.
- * @note Config reads rate_hz and range_ga. Unknown keys are skipped.
+ * @note Config reads rate_hz, range_ga, and full_rate. Unknown keys are skipped.
  */
 esp_err_t app_cbor_decode_cmd(const uint8_t* data, size_t len, app_cmd_t& out);
 
 /** @brief Encode the config reply map. */
 esp_err_t app_cbor_encode_cfg(cbor_buf_t& buf, const app_cfg_rsp_t& rsp);
 
-/** @brief Encode one mag sample map. Unit is uT. */
+/**
+ * @brief Encode one mag sample map. Unit is uT.
+ * @note The map includes rate_hz from the sample time.
+ */
 esp_err_t app_cbor_encode_mag(cbor_buf_t& buf, const mag_sample_msg_t& sample);
 
 /** @brief Encode one 3-axis FFT map. */
